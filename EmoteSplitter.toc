@@ -1,0 +1,11 @@
+## Interface: 70200
+## Title: Emote Splitter
+## Version: 1.2.9
+## Notes: Unlocks chatbox and splits long emotes.
+## Author: Tammya-MoonGuard
+## OptionalDeps: UnlimitedChatMessage
+## SavedVariables: EmoteSplitterSaved
+   
+embeds.xml
+EmoteSplitter.lua
+options.lua
