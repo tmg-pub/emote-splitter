@@ -48,6 +48,7 @@ SlashCmdList["EMOTESPLITTER"] = function( msg )
 	-- Open options panel.
 	
 	Main:Options_Show()
+	
 end
  
 -------------------------------------------------------------------------------
@@ -210,6 +211,10 @@ end
 --               found. If false, the `func` wouldn't have been called.
 -------------------------------------------------------------------------------
 function Main:SplitNewlines( msg, func )
+	 
+	-- Convert "\n" to LF
+	msg = msg:gsub( "\\n", "\n" )
+	
 	if msg:find( "\n" ) then
 		for splitmsg in msg:gmatch( "[^\n]+" ) do
 			func( splitmsg )
@@ -374,7 +379,7 @@ function Main:SplitMessage( text )
 			
 		end
 	end
-	
+
 	-- and the final chunk
 	table.insert( chunks, text )
 	
@@ -502,7 +507,7 @@ function Main:CommitChat( msg, kind, lang, channel )
 	   
 		self.fastpost_time = GetTime()
 		self.messages_waiting = 0
-		
+
 		if kind == "BNET" then
 			self.hooks.BNSendWhisper( channel, msg )
 		else
@@ -510,7 +515,7 @@ function Main:CommitChat( msg, kind, lang, channel )
 		end
 	else
 		-- libbw:
-		
+
 		if kind == "BNET" then
 			g_throttler_hook_bnet( g_throttle_lib, channel + BNET_FLAG_OFFSET, msg, "ALERT", nil, OnCTL_Sent )
 		else

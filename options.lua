@@ -85,7 +85,7 @@ local OPTIONS_TABLE = {
 			width = "full";
 			set = function( info, val ) Main.db.global.showsending = val end;
 			get = function( info ) return Main.db.global.showsending end;
-		}
+		}; 
 		
 	};
 }
@@ -100,5 +100,6 @@ end
 
 -------------------------------------------------------------------------------
 function Main:Options_Show() 
+	InterfaceOptionsFrame_OpenToCategory( "Emote Splitter" )
 	InterfaceOptionsFrame_OpenToCategory( "Emote Splitter" )
 end
