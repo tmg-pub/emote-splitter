@@ -110,7 +110,8 @@ function Main:OnEnable()
 	self.sending_text.text:SetText( "Sending..." )
 	self.sending_text:Hide()
 	self.sending_text:SetFrameStrata( "DIALOG" )
-	 
+	
+	Main.EmoteProtection.Init()
 end
 
 -------------------------------------------------------------------------------

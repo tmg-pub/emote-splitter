@@ -1,18 +1,29 @@
 
-local Main = EmoteSplitter
-local AceConfig = LibStub("AceConfig-3.0")
+local Main            = EmoteSplitter
+local AceConfig       = LibStub("AceConfig-3.0")
 local AceConfigDialog = LibStub("AceConfigDialog-3.0")
-
-local g_loaded = false
 
 -------------------------------------------------------------------------------
 local DB_DEFAULTS = {
 	global = {
-		premark = "»";
-		postmark = "»";
-		fastpost = true;
-		hidefailed = true;
-		showsending = true;
+		premark         = "»";
+		postmark        = "»";
+		fastpost        = true;
+		hidefailed      = true;
+		showsending     = true;
+		emoteprotection = true;
+	};
+	char = {
+		undo_history = {
+			-- undo history for emote protection.
+			-- [chatbox index] = {
+			--   position = position in buffer to next write to
+			--   history[index, highest=newest] = {
+			--     text = chat text
+			--     cursor = cursor position
+			--   }
+			-- }
+		};
 	};
 }
 
@@ -85,7 +96,20 @@ local OPTIONS_TABLE = {
 			width = "full";
 			set = function( info, val ) Main.db.global.showsending = val end;
 			get = function( info ) return Main.db.global.showsending end;
-		}; 
+		};
+		
+		emoteprotection = {
+			name = "Undo / Emote Protection";
+			desc = "Adds |cffffffffCtrl-Z|r and |cffffffffCtrl-Y|r keybinds to edit boxes for undo/redo functionality. This is especially for saving longer emotes if you click off (typically by accident), or disconnect. If you lose your emote, |cffffffffCtrl-Z|r!";
+			order = 60;
+			type = "toggle";
+			width = "full";
+			set = function( info, val ) 
+				Main.db.global.emoteprotection = val 
+				Main.EmoteProtection.OptionsChanged()
+			end;
+			get = function( info ) return Main.db.global.emoteprotection end;
+		};
 		
 	};
 }
