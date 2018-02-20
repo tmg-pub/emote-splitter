@@ -1,3 +1,11 @@
+## 1.3.3
+Time and time again we tell ourselves to not type super long emotes in-game because the editbox is just so primitive, and it's so easy to lose things. But it's just so darn convenient. Worry not. Emote Splitter 1.3.3 adds undo functionality, so even if you screw up and close the chat editor mid-typing, or even if you disconnect, you can just press Ctrl-Z to undo and get your emote back!
+
+Patch 7.3.5 update.
+
+Added undo/redo.
+
+
 ## 1.3.2
 Converts "\n" to newlines (breaks apart emotes).
 
