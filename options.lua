@@ -100,7 +100,7 @@ local OPTIONS_TABLE = {
 		
 		emoteprotection = {
 			name = "Undo / Emote Protection";
-			desc = "Adds |cffffffffCtrl-Z|r and |cffffffffCtrl-Y|r keybinds to edit boxes for undo/redo functionality. This is especially for saving longer emotes if you click off (typically by accident), or disconnect. If you lose your emote, |cffffffffCtrl-Z|r!";
+			desc = "Adds |cffffff00Ctrl-Z|r and |cffffff00Ctrl-Y|r keybinds to edit boxes for undo/redo functionality. This is especially for rescuing longer emotes if you click off accidentally or disconnect. If you lose your emote, |cffffff00Ctrl-Z|r!";
 			order = 60;
 			type = "toggle";
 			width = "full";
