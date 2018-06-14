@@ -30,11 +30,12 @@ local DB_DEFAULTS = {
 -------------------------------------------------------------------------------
 local OPTIONS_TABLE = {
 	type = "group";
-	name = "EmoteSplitter";
+	name = "Emote Splitter";
 	args = {
-		desc = { 
+		desc = {
 			order = 10;
-			name = "Version: " .. GetAddOnMetadata( "EmoteSplitter", "Version" ) .. "|nby Tammya-MoonGuard";
+			name = L( "Version: {1}", GetAddOnMetadata( "EmoteSplitter", "Version" )) 
+			       .. "|n" .. L["by Tammya-Moonguard"];
 			type = "description";
 		};
 		
@@ -42,7 +43,7 @@ local OPTIONS_TABLE = {
 			name = "Postfix Mark";
 			desc = "Text to postfix split emotes. Leave blank to disable.";
 			order = 20;
-			type = "input"; 
+			type = "input";
 			set = function( info, val ) Main.db.global.postmark = val:sub( 1, 10 ) end;
 			get = function( info ) return Main.db.global.postmark end;
 		};
@@ -115,9 +116,9 @@ local OPTIONS_TABLE = {
 }
 
 -------------------------------------------------------------------------------
-function Main:Options_Init()
-	self.db = LibStub( "AceDB-3.0" ):New( 
-					"EmoteSplitterSaved", DB_DEFAULTS, true )
+function Main.Options_Init()
+	Main.db = LibStub( "AceDB-3.0" ):New( "EmoteSplitterSaved", 
+	                                      DB_DEFAULTS, true )
 	AceConfig:RegisterOptionsTable( "EmoteSplitter", OPTIONS_TABLE )
 	AceConfigDialog:AddToBlizOptions( "EmoteSplitter", "Emote Splitter" )
 end
