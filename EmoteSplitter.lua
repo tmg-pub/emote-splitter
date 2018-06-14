@@ -143,15 +143,13 @@ SlashCmdList["EMOTESPLITTER"] = function( msg )
 	-- Command to change the maximum message length.
 	-- /emotesplitter maxlen <number>
 	if arg1:lower() == "maxlen" then
-	
 		-- Humans can be pretty nasty in what they give to you, so we do a
 		-- little bit of sanitization here. Make sure it's a number, and then
 		-- clamp the range to a reasonable amount.
 		local v = tonumber(arg2) or 0 -- 40 might still be obnoxiously low,
 		v = math.max( v, 40 )         --  floor, but who knows, maybe someone
 		v = math.min( v, 255 )        --  might need that much extra room.
-		
-		-- This is an obscure need anyway, so we don't really care too much.
+		-- It's is an obscure need anyway, so we don't really care too much.
 		-- Our primary concern is probably trolls using this feature, to spam
 		--  a lot of nonsense with tons of split messages. But that's what the
 		--  ignore and report spam features are for, right?
@@ -279,8 +277,8 @@ end                          --  even the Blizzard UI, messes with it.
 
 -------------------------------------------------------------------------------
 -- Chat filters are run on organic calls to SendChatMessage. In other words
--- they're used to process text that is send by the user before it gets
--- passed to the main system (which cuts it up and actually sends it.)
+--  they're used to process text that is send by the user before it gets
+--  passed to the main system (which cuts it up and actually sends it.)
 --
 -- @param func Function with the signature( text, chatType, language, channel )
 --             Return false to stop the message from being sent
