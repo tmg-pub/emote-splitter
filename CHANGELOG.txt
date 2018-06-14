@@ -13,13 +13,15 @@ Added undo/redo.
 ## 1.3.2
 Converts "\n" to newlines (breaks apart emotes).
 
+
 ## 1.3.1
 Compatibility update.
+
 
 ## 1.3.0
 Patch 7.3 compatibility.
 
-## 1.2.9
 
+## 1.2.9
 Support for patch 7.2.5.
 Splitting code is more stable.
