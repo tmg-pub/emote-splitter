@@ -1,3 +1,9 @@
+## 1.3.5
+Localization support.
+
+Cleanup. :)
+
+
 ## 1.3.4
 libbw update.
 

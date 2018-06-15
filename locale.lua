@@ -3,7 +3,7 @@
 --  at home too.
 -------------------------------------------------------------------------------
 
-local Main = EmoteSplitter
+local _, Me = ...
 
 -------------------------------------------------------------------------------
 -- First of all, we have this table filled with localization strings.
@@ -54,7 +54,7 @@ Locales = nil -- everything. Just blow up this old Locales table.
 
 -------------------------------------------------------------------------------
 -- And here we have the main Locale API. It's simple, but has some cool
-Main.Locale = setmetatable( {}, { -- features. Normally, this table will be 
+Me.Locale = setmetatable( {}, { -- features. Normally, this table will be 
                                   --  stored in a local variable called L.
 
 	-- If we access it like L["KEY"] or L.KEY then it's a direct lookup into

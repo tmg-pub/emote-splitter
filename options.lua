@@ -124,7 +124,7 @@ function Main.Options_Init()
 end
 
 -------------------------------------------------------------------------------
-function Main:Options_Show() 
+function Main.Options_Show() 
 	InterfaceOptionsFrame_OpenToCategory( "Emote Splitter" )
 	InterfaceOptionsFrame_OpenToCategory( "Emote Splitter" )
 end
