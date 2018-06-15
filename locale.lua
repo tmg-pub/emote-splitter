@@ -62,7 +62,7 @@ Me.Locale = setmetatable( {}, { -- features. Normally, this table will be
 	__index = function( table, key ) -- Most of the translations' keys are
 		return locale_strings[key]   --  literal English translations.
 		       or key
-	end
+	end;
 	
 	-- If we treat the locale table like a function, then we can do 
 	--  substitutions, like `L( "string {1}", value )`.

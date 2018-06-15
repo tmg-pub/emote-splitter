@@ -7,7 +7,6 @@
 ## SavedVariables: EmoteSplitterSaved
    
 embeds.xml
-init.lua
 locale.lua
 EmoteSplitter.lua
 emoteprotection.lua

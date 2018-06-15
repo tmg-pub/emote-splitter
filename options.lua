@@ -1,5 +1,7 @@
 
-local Main            = EmoteSplitter
+local _, Me = ...
+local L = Me.Locale
+
 local AceConfig       = LibStub("AceConfig-3.0")
 local AceConfigDialog = LibStub("AceConfigDialog-3.0")
 
@@ -44,8 +46,8 @@ local OPTIONS_TABLE = {
 			desc = "Text to postfix split emotes. Leave blank to disable.";
 			order = 20;
 			type = "input";
-			set = function( info, val ) Main.db.global.postmark = val:sub( 1, 10 ) end;
-			get = function( info ) return Main.db.global.postmark end;
+			set = function( info, val ) Me.db.global.postmark = val:sub( 1, 10 ) end;
+			get = function( info ) return Me.db.global.postmark end;
 		};
 		
 		desc1 = {
@@ -59,8 +61,8 @@ local OPTIONS_TABLE = {
 			desc = "Text to prefix continued emotes. Leave blank to disable.";
 			order = 22;
 			type = "input"; 
-			set = function( info, val ) Main.db.global.premark = val:sub( 1, 10 ) end;
-			get = function( info ) return Main.db.global.premark end;
+			set = function( info, val ) Me.db.global.premark = val:sub( 1, 10 ) end;
+			get = function( info ) return Me.db.global.premark end;
 		};
 		
 		desc2 = {
@@ -75,8 +77,8 @@ local OPTIONS_TABLE = {
 			order = 30;
 			type = "toggle";
 			width = "full";
-			set = function( info, val ) Main.db.global.fastpost = val end;
-			get = function( info ) return Main.db.global.fastpost end;
+			set = function( info, val ) Me.db.global.fastpost = val end;
+			get = function( info ) return Me.db.global.fastpost end;
 		};
 		
 		hidefailed = {
@@ -85,8 +87,8 @@ local OPTIONS_TABLE = {
 			order = 40;
 			type = "toggle";
 			width = "full";
-			set = function( info, val ) Main.db.global.hidefailed = val end;
-			get = function( info ) return Main.db.global.hidefailed end;
+			set = function( info, val ) Me.db.global.hidefailed = val end;
+			get = function( info ) return Me.db.global.hidefailed end;
 		};
 		
 		showsending = {
@@ -95,8 +97,8 @@ local OPTIONS_TABLE = {
 			order = 50;
 			type = "toggle";
 			width = "full";
-			set = function( info, val ) Main.db.global.showsending = val end;
-			get = function( info ) return Main.db.global.showsending end;
+			set = function( info, val ) Me.db.global.showsending = val end;
+			get = function( info ) return Me.db.global.showsending end;
 		};
 		
 		emoteprotection = {
@@ -106,25 +108,25 @@ local OPTIONS_TABLE = {
 			type = "toggle";
 			width = "full";
 			set = function( info, val ) 
-				Main.db.global.emoteprotection = val 
-				Main.EmoteProtection.OptionsChanged()
+				Me.db.global.emoteprotection = val 
+				Me.EmoteProtection.OptionsChanged()
 			end;
-			get = function( info ) return Main.db.global.emoteprotection end;
+			get = function( info ) return Me.db.global.emoteprotection end;
 		};
 		
 	};
 }
 
 -------------------------------------------------------------------------------
-function Main.Options_Init()
-	Main.db = LibStub( "AceDB-3.0" ):New( "EmoteSplitterSaved", 
+function Me.Options_Init()
+	Me.db = LibStub( "AceDB-3.0" ):New( "EmoteSplitterSaved", 
 	                                      DB_DEFAULTS, true )
 	AceConfig:RegisterOptionsTable( "EmoteSplitter", OPTIONS_TABLE )
 	AceConfigDialog:AddToBlizOptions( "EmoteSplitter", "Emote Splitter" )
 end
 
 -------------------------------------------------------------------------------
-function Main.Options_Show() 
+function Me.Options_Show() 
 	InterfaceOptionsFrame_OpenToCategory( "Emote Splitter" )
 	InterfaceOptionsFrame_OpenToCategory( "Emote Splitter" )
 end

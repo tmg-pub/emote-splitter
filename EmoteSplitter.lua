@@ -224,7 +224,7 @@ function Me:OnEnable() -- initialized, and so is the game.
 	-- Using AceHook, a "raw" hook is when you completely replace the original
 	--  function. Your callback fires when they try to call it, and it's up to
 	--  you to call the original function which is stored as 
-	--  `self.hooks.FunctionName`. In other words, it's a pre-hook that can
+	--  `Me.hooks.FunctionName`. In other words, it's a pre-hook that can
 	Me:RawHook( "SendChatMessage", true ) -- modify or cancel the result.
 	Me:RawHook( "BNSendWhisper", true )   -- 
 	-- And here's a normal hook. It's still a pre-hook, in that it's called
@@ -253,7 +253,7 @@ function Me:OnEnable() -- initialized, and so is the game.
 	-- chat frames, the failure messages that the system sends when your
 	-- chat gets throttled.
 	ChatFrame_AddMessageEventFilter( "CHAT_MSG_SYSTEM", 
-		function( self, event, msg, sender )
+		function( _, _, msg, sender )
 			-- Someone might argue that we shouldn't hook this event at all
 			--  if someone has this feature disabled, but let's be real;
 			--  99% of people aren't going to turn this off anyway.
@@ -445,15 +445,15 @@ function Me.SplitLines( text ) --
 	--  addons, typing "\n" will cut off the rest of your message without 
 	--  question. It's just a quirk in the API. Probably some security measure
 	--  or some such for prudency? We're just making use of that quirk so
-	--                            -- people can easily type a newline mark.
-	msg = msg:gsub( "\\n", "\n" ) --
-	                              --
+	--                             -- people can easily type a newline mark.
+	text = text:gsub( "\\n", "\n" ) --
+	                                --
 	-- It's pretty straightforward to split the message now, we just use a 
-	local lines = {}                       -- simple pattern and toss it 
-	for line in msg:gmatch( "[^\n]+" ) do  --  into a table.
-		table.insert( lines, line )        --
-	end                                    --
-	                                       --
+	local lines = {}                        -- simple pattern and toss it 
+	for line in text:gmatch( "[^\n]+" ) do  --  into a table.
+		table.insert( lines, line )         --
+	end                                     --
+	                                        --
 	-- We used to handle this a bit differently, which was pretty nasty in
 	--  regard to chat filters and such. It's a /little/ more complex now,
 	return lines -- but a much better solution in the end.
@@ -631,7 +631,8 @@ function Me.SplitMessage( text )   --
 			-- In here, we just throw it on whichever list this pattern belongs
 			replaced_links[index] = replaced_links[index] or {} -- to.
 			table.insert( replaced_links[index], link )
-			return "\001\002" .. index .. string.rep( "\002", link:len() - 4 ) .. "\003"
+			return "\001\002" .. index 
+			       .. ("\002"):rep( link:len() - 4 ) .. "\003"
 		end)
 	end
 	
@@ -790,7 +791,7 @@ end
 -- Hide the sending indicator. Called after the system goes back to an idle 
 --                             -- state.
 function Me.SendingText_Hide()
-	self.sending_text:Hide()
+	Me.sending_text:Hide()
 end
 
 -------------------------------------------------------------------------------
@@ -831,7 +832,7 @@ function Me.SetChatTimer( func, delay ) --  have one timer running at once. If
 		if not timer.cancel then     --  background. On the other hand, they
 			func()                 -- may lead to some odd problems, memory
 		end                     -- leaks and such, hard to track down. Most of
-	end                       -- the data is invisible and difficult to
+	end)                      -- the data is invisible and difficult to
 	                          -- diagnose.
 	Me.chat_timer = timer     --             But hey, they're fun!
 end                           --
@@ -913,15 +914,15 @@ function Me.CommitChat( msg, kind, lang, channel )
 		-- Personally, I love this pattern of checking if time is past a
 		--  certain record, and then resetting it with the time, to make
 		--                              these sorts of checks.
-		self.fastpost_time = GetTime()
+		Me.fastpost_time = GetTime()
 		
 		-- We're only in here if message_waiting == 1, so we're removing that
-		self.messages_waiting = 0 -- and then sending our message directly to
+		Me.messages_waiting = 0 -- and then sending our message directly to
 		                          -- the chat API.
 		if kind == "BNET" then
-			self.hooks.BNSendWhisper( channel, msg ) -- Kind of weird that they
+			Me.hooks.BNSendWhisper( channel, msg ) -- Kind of weird that they
 		else                      -- have `presenceID` before `msg`, isn't it?
-			self.hooks.SendChatMessage( msg, kind, lang, channel )
+			Me.hooks.SendChatMessage( msg, kind, lang, channel )
 		end
 	else
 		-- If we didn't meet the "fastpost" criteria, then we're going to
