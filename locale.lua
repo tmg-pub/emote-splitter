@@ -28,9 +28,8 @@ local Locales = { -- For example, we'll delete this big table after
 
 -------------------------------------------------------------------------------
 -- What we do now is take the enUS table, and then merge it with whatever
-local locale_strings = Locales.enUS -- locale the client is using. Just paste 
-                                    --  it on top, and any untranslated strings 
-									--  will remain English.
+-- locale the client is using. Just paste it on top, and any untranslated
+local locale_strings = Locales.enUS  -- strings will remain English.
 
 do
 	local client_locale = GetLocale() -- Gets the WoW locale.
@@ -38,7 +37,6 @@ do
 	-- Skip this if they're using the English client, or if we don't support
 	-- the locale they're using (no strings defined).
 	if client_locale ~= "enUS" and Locales[client_locale] then
-	
 		-- Go through the foreign locale strings and overwrite the English
 		--  entries. I hate using the word "foreign"; it seems like I'm
 		--  treating non-English speakers as aliens, ehe...
@@ -67,11 +65,9 @@ Me.Locale = setmetatable( {}, { -- features. Normally, this table will be
 	-- If we treat the locale table like a function, then we can do 
 	--  substitutions, like `L( "string {1}", value )`.
 	__call = function( table, key, ... )
-	
 		-- First we get the translation. Note this isn't a raw access, so
 		key = table[key] -- this goes through the __index metamethod 
 		                 -- too if it doesn't exist.
-		
 		-- Pack args into a table; iterate over them.
 		local args = {...}
 		for i = 1, #args do

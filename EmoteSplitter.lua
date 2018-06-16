@@ -34,12 +34,19 @@
 --      ctrl-z, and get your work back.
 -----------------------------------------------------------------------------^-
 
-local AddonName, Me = ...
+-- Good code comments don't tell you the obvious. Good code tells you what's
+--  going on already. You want your comments to offer a fresh perspective, or
+--  just tell you something interesting. I read that in the Java manual. Ever
+--  written Java? Their principles and manual are actually pretty nice, and
+--  I don't think they get enough credit for it.
+-- Each addon is passed in from the parent the addon name (the folder name, 
+--  EmoteSplitter, no spaces), and a special table. We use this table to pass
+local AddonName, Me = ...  -- around info from our other files.
 
--- Create our main addon object. We're embedding AceAddon into the table that
-LibStub("AceAddon-3.0"):NewAddon(  --  WoW provides us for our addon.
-	-- Passing it into here as the first argument will let AceAddon know we
-	Me, AddonName, -- want to use that object instead of creating a new one.
+-- We're embedding our "AceAddon" into that table. 
+LibStub("AceAddon-3.0"):NewAddon(-- AceAddon lets us do that
+	-- by passing it into here as the first argument, so it doesn't create
+	Me, AddonName, -- an empty one.
 	"AceHook-3.0",  --> We use AceHook to hook the game's chat message
 	               --    functions.
 	"AceEvent-3.0"  --> And we use AceEvent for listening to the game's 
@@ -147,60 +154,69 @@ function Me:OnInitialize() end -- addon is first loaded by the game client.
 SlashCmdList["EMOTESPLITTER"] = function( msg )
 
 	-- By default, with no arguments, we open up the configuration panel.
+	-- Might want to trim msg of whitespace. Or maybe test if you can even pass
+	--  pure whitespace to a chat command. Oh well though. I doubt a lot of
+	--  people will use the chat command for getting to the options anyway.
 	if msg == "" then
 		Me.Options_Show()
 		return
 	end
 	
-	-- Otherwise, parse out these arguments...
-	-- A simple pattern to match words that are inbetween whitespace.
-	local args = msg:gmatch( "%S+" ) --
-	local arg1 = args()              -- Get first argument.
-	local arg2 = args()              -- And then second argument.
+	-- Using a simple pattern here to parse out arguments. %s+ matches 
+	--  whitespace "words", %S+ matches "non-whitespace" words.
+	local args = msg:gmatch( "%S+" ) -- Might seem a little weird doing it like
+	local arg1 = args()              --  this, but sometimes lua iterators can
+	local arg2 = args()              --  make odd code like this.
 	
 	-- Command to change the maximum message length.
-	-- /emotesplitter maxlen <number>
+	--                                    /emotesplitter maxlen <number>
 	if arg1:lower() == "maxlen" then
-		-- Humans can be pretty nasty in what they give to you, so we do a
-		-- little bit of sanitization here. Make sure it's a number, and then
-		-- clamp the range to a reasonable amount.
+		-- Humans can be pretty nasty in what they give to you, and it might
+		--  not even be on purpose. I'd say that a /lot/ of code in the world
+		--  is just there to sanitize what human's give computers.
 		local v = tonumber(arg2) or 0 -- 40 might still be obnoxiously low,
 		v = math.max( v, 40 )         --  floor, but who knows, maybe someone
 		v = math.min( v, 255 )        --  might need that much extra room.
 		-- It's is an obscure need anyway, so we don't really care too much.
 		-- Our primary concern is probably trolls using this feature, to spam
 		--  a lot of nonsense with tons of split messages. But that's what the
-		--  ignore and report spam features are for, right?
-		Me.max_message_length = v
-		print( L( "Max message length set to {1}.", v ))
+		Me.max_message_length = v  -- ignore and report spam features are for,
+		print( L( "Max message length set to {1}.", v ))         -- right?
 		return
 	end
 end
  
 -------------------------------------------------------------------------------
 -- Here's the real initialization code. This is called after all addons are 
-function Me:OnEnable() -- initialized, and so is the game.
-
+--                                     -- initialized, and so is the game.
+function Me:OnEnable()
 	-- We definitely cannot work if UnlimitedChatMessage is enabled at the
 	--  same time. If we see that it's loaded, then we cancel our operation
 	if UCM then -- in favor of it. Just print a notice instead. Better than 
 		        --  everything just breaking.
-		print( L["Emote Splitter cannot run with UnlimitedChatMessage enabled."] )
-		
 		-- We have UnlimitedChatMessage listed in the TOC file as an optional
 		--  dependency. That's so this loads after it, so we can always catch
 		--  this problem.
+		print( L["Emote Splitter cannot run with UnlimitedChatMessage enabled."] )
+		-- Now, we /could/ just hack up UCM in here and disable it ourselves,
+		--  but I think this is a bit more of a nice approach...
 		return
 	end
 	-- Some miscellaneous things here.
-	Me.Options_Init() -- Load our options and install the configuration 
-	                    -- panel in the interface tab.
-	SLASH_EMOTESPLITTER1 = "/emotesplitter" -- Setup our slash command.
+	-- See options.lua. This is initializing our configuration database, so 
+	Me.Options_Init() -- it's needed before we can access Me.db.etc.
+	
+	-- Adding slash commands to the game is fairly straightforward. First you
+	--  add a function to the SlashCmdList table, and then you assign the 
+	--  command to the global SLASH_XYZ1. You can add more aliases with 
+	SLASH_EMOTESPLITTER1 = "/emotesplitter" -- SLASH_XYZ2 or SLASH_XYZ3 etc.
 	
 	-- Message hooking. These first ones are the public message types that we
 	--  want to hook for confirmation. They're the ones that can error out if
 	--                           they're hit randomly by the server throttle.
 	Me:RegisterEvent( "CHAT_MSG_SAY", function( ... )
+		-- We're only interested in a couple of things, and that's the message
+		-- type, and the user GUID. Param13 of ... is GUID.
 		Me.TryConfirm( "SAY", select( 13, ... ))
 	end)
 	Me:RegisterEvent( "CHAT_MSG_EMOTE", function( ... )
@@ -251,18 +267,17 @@ function Me:OnEnable() -- initialized, and so is the game.
 	
 	-- Here's where we add the feature to hide the failure messages in the
 	-- chat frames, the failure messages that the system sends when your
-	-- chat gets throttled.
-	ChatFrame_AddMessageEventFilter( "CHAT_MSG_SYSTEM", 
-		function( _, _, msg, sender )
+	ChatFrame_AddMessageEventFilter( "CHAT_MSG_SYSTEM", -- chat gets
+		function( _, _, msg, sender )                   --  throttled.
 			-- Someone might argue that we shouldn't hook this event at all
 			--  if someone has this feature disabled, but let's be real;
 			--  99% of people aren't going to turn this off anyway.
-			if Me.db.global.hidefailed -- "Hide Failure Messages" option
-			   and msg == ERR_CHAT_THROTTLED -- The localized string.
-			   and sender == "" then -- Extra event verification.
-			                         -- System has sender as "".
-				-- Filter this message.
-				return true
+			if Me.db.global.hidefailed --> "Hide Failure Messages" option
+			   and msg == ERR_CHAT_THROTTLED --> The localized string.
+			   and sender == "" then --> Extra event verification.
+			                         -- (System has sender as "").
+				-- Returning true from these callbacks block the message
+				return true -- from showing up.
 			end
 		end)
 	
@@ -279,7 +294,9 @@ function Me:OnEnable() -- initialized, and so is the game.
 	-- This might be considered a bit primitive or dirty. Usually all of this
 	--  stuff is defined in an XML file, and things like fonts and sizes are
 	--  inherited from some of the standard font classes in play. But ...
-	--  this is a lot easier and simpler to setup, this way.
+	--  this is a lot easier and simpler to setup, this way. I think it'd
+	--  still be better to fix up some of this to be more friendly with the
+	--  game, and inherit its fonts templates. (TODO!)
 	f.text = f:CreateFontString( nil, "OVERLAY" ) -- Unnamed, overlay layer.
 	f.text:SetPoint( "BOTTOMLEFT" ) -- Bottom-left of the frame, which is
 	                                -- 3 pixels from the edge of the screen.
@@ -327,7 +344,7 @@ end
 --  with Tongues, but we have the workaround with the /emotesplitter maxlen
 --  command.
 -- 
--- The signature for the callback function (filter_function) is
+-- The signature for the callback function (filter_function) is:
 --
 --   function( text, chat_type, language, channel )
 --
@@ -335,20 +352,19 @@ end
 --  passed to SendChatMessage.
 --
 --   text:      The message text.
---   chat_type: "SAY", "EMOTE" etc
+--   chat_type: "SAY", "EMOTE" etc, may also be "BNET" for BNet whispers.
 --   language:  Language ID (a number)
---   channel:   Channel name or whisper target for WHISPER chatType.
+--   channel:   Channel name or whisper target for WHISPER chatType. This is
+--               also presenceID for BNet whispers. (For BNSendWhisper API)
 --
---   Return false from this function to block the message from being send, to
+--   Return false from this function to block the message from being send--to
 --    discard it. Return nothing (nil) to have the filter do nothing, and let
 --    the message pass through.
---   Otherwise, `return text, chatType, language, channel` to modify the chat
+--   Otherwise, `return text, chat_type, language, channel` to modify the chat
 --    message. Take extra care to make sure that you're only setting these to
 --    valid values.
 --
--- This returns true if the filter was added, and false if it already exists.
---
--- Remove filters with RemoveChatFilter.
+-- Returns true if the filter was added, and false if it already exists.
 --
 function Me.AddChatFilter( filter_function )
 	if FindTableValue( Me.chat_filters, filter_function ) then
@@ -363,7 +379,7 @@ end
 -- You can also easily remove chat filters with this. Just pass in your
 --  function reference that you had given to AddChatFilter.
 --
--- This returns true if the filter was removed, and false if it wasn't found.
+-- Returns true if the filter was removed, and false if it wasn't found.
 --
 function Me.RemoveChatFilter( filter_function )
 	local index = FindTableValue( Me.chat_filters, filter_function )
@@ -435,7 +451,7 @@ end
 --  include any newline characters or marks in the results. If there aren't any
 --  newlines, then this is going to just return { text }.
 --                               --
-function Me.SplitLines( text ) --
+function Me.SplitLines( text )   --
 	-- We merge "\n" into LF too. This might seem a little bit unwieldy, right?
 	-- Like, you're wondering what if the user pastes something
 	--  like C:\nothing\etc... into their chatbox to send to someone. It'll be
@@ -462,7 +478,7 @@ end
 -------------------------------------------------------------------------------
 -- Our hook for SendChatMessage in the WoW API. This is where the magic begins.
 --
-function Me:SendChatMessage( msg, chatType, language, channel )
+function Me:SendChatMessage( msg, chat_type, language, channel )
 	
 	-- First of all, without a little bit of "special care" we don't really
 	--  know what's calling this. It could either be from the outside, an
@@ -478,18 +494,18 @@ function Me:SendChatMessage( msg, chatType, language, channel )
 	--  was handled by our system already.
 	if channel and tostring(channel):find( "#ES" ) then
 		-- So if we find that flag, clip it off, and then let this message fly.
-		Me.hooks.SendChatMessage( msg, chatType, language, channel:sub(4) )
+		Me.hooks.SendChatMessage( msg, chat_type, language, channel:sub(4) )
 		return
 	end
 	
 	-- Otherwise, this is actually an organic call, a new patient ready for
 	--  some rigorous surgery. We start with a little bit of housekeeping here.
-	chatType = chatType:upper() -- We check the chatType often, so may as well
-	                            --  make it a fixed term before we continue.
+	chat_type = chat_type:upper() -- We check the chat_type often, so may as
+	                          --  well make it a fixed term before we continue.
 	-- Here's where we run our chat filters. See AddChatFilter for a more
 	--  rigorous discussion on them.
 	for _, filter in ipairs( Me.chat_filters ) do
-		local a, b, c, d = filter( msg, chatType, language, channel )
+		local a, b, c, d = filter( msg, chat_type, language, channel )
 		
 		-- If a chat filter returns `false` then we cancel this message. 
 		if a == false then  --
@@ -497,7 +513,7 @@ function Me:SendChatMessage( msg, chatType, language, channel )
 		elseif a then       --
 			-- Otherwise, if it's non-nil, we assume that they're changing
 			--  the arguments on their end, so we replace them with the
-			msg, chatType, language, channel = a, b, c, d -- return values.
+			msg, chat_type, language, channel = a, b, c, d -- return values.
 		end
 		
 		-- If the filter returned nil, then we don't do anything to the
@@ -515,7 +531,7 @@ function Me:SendChatMessage( msg, chatType, language, channel )
 	for _, line in ipairs( msg ) do             -- are right. But, otherwise
 		local chunks = Me.SplitMessage( line )   -- this message has to wait
 		for i = 1, #chunks do                     -- its turn.
-			Me.SendChat( chunks[i], chatType, language, channel )
+			Me.SendChat( chunks[i], chat_type, language, channel )
 		end
 	end
 end
@@ -552,7 +568,7 @@ function Me:BNSendWhisper( presenceID, messageText )
 	--  SendChatMessage function. Some might argue that things should be more
 	--  DRY, and this is bad practice, but I say that the plus side to doing
 	--  things a little WET (Write Everything Twice/Waste Everyone's Time)
-	--  means that it's easier to be more flexible, should there be a need 
+	--  means that it's easier to be more flexible, should there be a need
 	--  for it. I guess another reason for WET code is efficiency. More
 	--  customized handlers rather than one handler that's slower which
 	--  has a lot more ifs and thens.
@@ -877,7 +893,13 @@ function Me.SendChat( msg, type, lang, channel )
 		if msg:find( "卍" ) or msg:find( "卐" ) then return end
 		if UnitIsDeadOrGhost( "player" ) and (type == "SAY" 
 		--[[ Thirdly, we can't send  ]]    or type == "EMOTE" 
-		--[[ public chat while dead. ]]    or type == "YELL") then return end
+		--[[ public chat while dead. ]]    or type == "YELL") then 
+			-- We still want them to see the error, which they won't normally
+			--  see if we don't do it manually, since we're blocking
+			--                                    SendChatMessage.
+			UIErrorsFrame:AddMessage( ERR_CHAT_WHILE_DEAD, 1.0, 0.1, 0.1, 1.0 )
+			return
+		end
 		
 		table.insert( Me.chat_queue, {     -- It looks like we're all good to
 			msg = msg, type = type,        --  queue this puppy and start up

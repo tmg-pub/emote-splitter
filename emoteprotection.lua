@@ -1,35 +1,36 @@
-
-local _, Main         = ...
+-------------------------------------------------------------------------------
+-- Yeah, this is a pretty nasty section, as is anything when it comes to
+--  modding existing interfaces.
+-------------------------------------------------------------------------------
+local _, Me           = ...
 local AceConfig       = LibStub("AceConfig-3.0")
 local AceConfigDialog = LibStub("AceConfigDialog-3.0")
 
 local HISTORY_SIZE = 20
 
 -------------------------------------------------------------------------------
-local Me = {
+local This = {
 	hooked    = false;
 	last_text = {};
 	last_pos  = {};
+	undoing   = false;
 }
 
--- for stopping hooks
-local g_undoing = false
-
-Main.EmoteProtection = Me
+Me.EmoteProtection = This
 
 local function GetEditBox( index )
 	return _G["ChatFrame" .. index .. "EditBox"]
 end
 
 -------------------------------------------------------------------------------
-function Me.Init()
-	Me.OptionsChanged()
-	Me.db = Main.db.char.undo_history
+function This.Init()
+	This.OptionsChanged()
+	This.db = Me.db.char.undo_history
 	
 	-- prime undo history
-	for i = 1, 10 do
-		if not Me.db[i] then
-			Me.db[i] = {
+	for i = 1, NUM_CHAT_WINDOWS do
+		if not This.db[i] then
+			This.db[i] = {
 				position = 1;
 				history = {
 					{
@@ -43,30 +44,30 @@ function Me.Init()
 end
 
 -------------------------------------------------------------------------------
-function Me.OnEditboxChange( editbox, user_input, chat_index )
-	if not Main.db.global.emoteprotection then return end
+function This.OnEditboxChange( editbox, user_input, chat_index )
+	if not Me.db.global.emoteprotection then return end
 	
-	Main.db.global.emotewips[chat_index] = editbox:GetText()
+	Me.db.global.emotewips[chat_index] = editbox:GetText()
 end
 
 -------------------------------------------------------------------------------
 local function LoadUndo( index )
-	local data = Me.db[index]
+	local data = This.db[index]
 	local editbox = GetEditBox( index )
 	-- set the editbox text to the current undo data
-	g_undoing = true
+	This.undoing = true
 	
 	editbox:SetText( data.history[data.position].text )
 	editbox:SetCursorPosition( data.history[data.position].cursor )
 	
-	g_undoing = false
+	This.undoing = false
 end
 
 -------------------------------------------------------------------------------
-function Me.Undo( index )
-	local data = Me.db[index]
+function This.Undo( index )
+	local data = This.db[index]
 	if data.position == 1 then return end -- no more undo history.
-	Me.AddUndoHistory( index, true )
+	This.AddUndoHistory( index, true )
 	if data.position == 1 then return end -- no more undo history.
 	
 	data.position = data.position - 1
@@ -76,10 +77,10 @@ function Me.Undo( index )
 end
 
 -------------------------------------------------------------------------------
-function Me.Redo( index )
-	local data = Me.db[index]
+function This.Redo( index )
+	local data = This.db[index]
 	if data.position == #data.history then return end -- no more history
-	Me.AddUndoHistory( index, true )
+	This.AddUndoHistory( index, true )
 	if data.position == #data.history then return end -- cant redo here.
 	
 	data.position = data.position + 1
@@ -96,8 +97,8 @@ end
 --               the chatbox or sending the message.
 -- @param custom_text Use this instead of GetText()
 --
-function Me.AddUndoHistory( index, force, custom_text, custom_pos )
-	local data = Me.db[index]
+function This.AddUndoHistory( index, force, custom_text, custom_pos )
+	local data = This.db[index]
 	local editbox = GetEditBox( index )
 	local text = custom_text or editbox:GetText()
 	
@@ -124,29 +125,29 @@ function Me.AddUndoHistory( index, force, custom_text, custom_pos )
 end
 
 -------------------------------------------------------------------------------
-function Me.MyTextChanged( index, text, position, force )
+function This.MyTextChanged( index, text, position, force )
 	local editbox = GetEditBox(index)
 	
 	if text == "" then
-		if Me.last_text[index] then
-			Me.AddUndoHistory( index, true, Me.last_text[index], Me.last_pos[index] )
+		if This.last_text[index] then
+			This.AddUndoHistory( index, true, This.last_text[index], This.last_pos[index] )
 		end
 	end
 	
-	Me.last_text[index] = text
-	Me.last_pos[index]  = position
+	This.last_text[index] = text
+	This.last_pos[index]  = position
 	
-	Me.AddUndoHistory( index, force, text, position )
+	This.AddUndoHistory( index, force, text, position )
 end
 
 -------------------------------------------------------------------------------
-Me.EditboxHooks = {
+This.EditboxHooks = {
 -------------------------------------------------------------------------------
 	OnTextChanged = function( self, index, user_input )
 		if not user_input then return end
 		
 		local editbox = GetEditBox(index)
-		Me.MyTextChanged( index, editbox:GetText(), editbox:GetCursorPosition(), false )
+		This.MyTextChanged( index, editbox:GetText(), editbox:GetCursorPosition(), false )
 	end;
 -------------------------------------------------------------------------------
 	OnKeyDown = function( self, index, key )
@@ -154,44 +155,40 @@ Me.EditboxHooks = {
 		if IsControlKeyDown() then
 			if key == "Z" then
 				-- Undo
-				Me.Undo( index )
+				This.Undo( index )
 			elseif key == "Y" then
 				-- Redo
-				Me.Redo( index )
+				This.Redo( index )
 			end
 		end
 	end;
 -------------------------------------------------------------------------------
 	OnShow = function( self, index )
 		-- clean undo history
-		Me.MyTextChanged( index, "", 0, true )
+		This.MyTextChanged( index, "", 0, true )
 	end;
 -------------------------------------------------------------------------------
 	OnHide = function( self, index )
 		-- save emote if clicked off.
 		local text = GetEditBox(index):GetText()
-		Me.MyTextChanged( index, "", 0, true )
+		This.MyTextChanged( index, "", 0, true )
 	end;
--------------------------------------------------------------------------------
---	OnEscapePressed = function( self, index )
---		Me.AddUndoHistory( index, true )
---	end
 }
 
 -------------------------------------------------------------------------------
-function Me.Hook()
-	if Me.hooked then return end
+function This.Hook()
+	if This.hooked then return end
 	
-	Me.hooked = true
+	This.hooked = true
 	
 	-- hook all chatboxes
 	for i = 1,10 do
-		for script, handler in pairs( Me.EditboxHooks ) do
+		for script, handler in pairs( This.EditboxHooks ) do
 			_G["ChatFrame" .. i .. "EditBox"]:HookScript( script,
 				function( editbox, ... )
 				
 					-- we have global disable here.
-					if not Main.db.global.emoteprotection then return end
+					if not Me.db.global.emoteprotection then return end
 					
 					handler( editbox, i, ... )
 				end)
@@ -200,8 +197,8 @@ function Me.Hook()
 end
 
 -------------------------------------------------------------------------------
-function Me.OptionsChanged()
-	if Main.db.global.emoteprotection then
-		Me.Hook()
+function This.OptionsChanged()
+	if Me.db.global.emoteprotection then
+		This.Hook()
 	end
 end
