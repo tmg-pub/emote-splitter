@@ -139,11 +139,25 @@ Me.fastpost_time = 0 -- At least FASTPOST_PERIOD seconds must pass before we
 --  to limit how much text can be sent in a single message, so then Tongues can
 Me.max_message_length = 255 -- have some extra room to work with, making the 
                             --  message longer and such. It's wasteful, but
-                            --  it works.
+                            --                                    it works.
+-------------------------------------------------------------------------------
+-- We do some latency tracking ourselves, since the one provided by the game
+--  isn't very accurate at all when it comes to recent events. The one in the
+--  game is only updated every 30 seconds. We need an accurate latency value
+--  immediately to detect lag spikes and then delay our handlers accordingly.
+-- We measure latency by setting `recording` to the time we send a chat
+Me.latency           = 0.1  -- message, and then get the time difference 
+Me.latency_recording = nil  --         when we receive a server event.
+                            -- Our value is in seconds.
+-------------------------------------------------------------------------------
 -- A lot of these definitions used to be straight local variables, but this is
 --  a little bit cleaner, keeping things inside of this "Me" table, as well
 --  as exposing it to the outside so we can do some easier diagnostics in case
---  something goes wrong down the line.
+--  something goes wrong down the line. Another great plus to exposing
+--  everything like this is that other addons can see what we're doing. Sure,
+--  the proper way is to make an API for something, but when it comes to the
+--  modding scene, things can get pretty hacky, and it helps a bit to allow
+--  others to mess with your code from the outside if they need to.
 -------------------------------------------------------------------------------
 -- We don't really need this but define it for good measure. Called when the
 function Me:OnInitialize() end -- addon is first loaded by the game client.
@@ -794,7 +808,7 @@ end
 -- And this one sets it to a failed state (FAILED/WAITING). This shows up when
 --                                   -- we're throttled by the server, and
 function Me.SendingText_ShowFailed() --  we're waiting a few seconds before
-	if Me.db.global.showsending then return end -- retrying sending.
+	if not Me.db.global.showsending then return end -- retrying sending.
 	local t = Me.sending_text
 	-- We've got a spicy color here for you kids. 
 	--        This is called "fire engine" from audrey613 on colourlovers.com!
@@ -818,7 +832,14 @@ end
 --  counter at non-zero, with our system locking up because it thinks it's
 --  busy. Could really use something on the side to check up on this, to make
 --                           -- sure that it's not getting stuck.
-local function OnCTL_Sent()
+local function OnCTL_Sent( recordLatency )
+	-- When we call SendChatMessage, we can pass an argument to this callback
+	--  function. That's not something too uncommon in the API world. This is
+	--  set to true when we're sending a chat type that goes through our
+	--  queue system. We record the time from this point up until we get an
+	if recordLatency then                -- error or the chat confirmation.
+		Me.StartLatencyRecording()
+	end
 	-- I'm not 100% sure why we even have this little system, but as far as I
 	--  know, it's meant for the FastPost feature, which is used to bypass
 	--  the throttler at times when it's not busy.
@@ -927,6 +948,13 @@ function Me.CommitChat( msg, kind, lang, channel )
 	--  waiting to be sent in the throttler.
 	Me.messages_waiting = Me.messages_waiting + 1
 	
+	-- For public chat messages, we also want to record the latency so we can
+	-- use it later if something goes wrong.
+	local record_latency = false
+	if kind == "SAY" or kind == "EMOTE" or kind == "YELL" then
+		record_latency = true
+	end
+	
 	-- Basically, that allows us to see when the throttler isn't busy. It's
 	--  important for our "fast post" feature. If that's enabled, then we can
 	--  bypass the chat system every so often--defined as 500 milliseconds
@@ -946,6 +974,10 @@ function Me.CommitChat( msg, kind, lang, channel )
 		else                      -- have `presenceID` before `msg`, isn't it?
 			Me.hooks.SendChatMessage( msg, kind, lang, channel )
 		end
+		
+		if record_latency then
+			Me.StartLatencyRecording()
+		end
 	else
 		-- If we didn't meet the "fastpost" criteria, then we're going to
 		--  pass this message to the chat throttler lib we're using (libbw).
@@ -962,7 +994,8 @@ function Me.CommitChat( msg, kind, lang, channel )
 			--                                                like above.
 			Me.throttler_hook_sendchat( Me.throttle_lib, msg, 
 			                            kind, lang, "#ES" .. (channel or ""), 
-										"ALERT", nil, OnCTL_Sent )
+										"ALERT", nil, OnCTL_Sent, 
+										record_latency )
 		end
 		
 		-- The chat throttle lib can call OnCTL_Sent inside of the above
@@ -1043,14 +1076,29 @@ end
 -- These two functions are called from our event handlers. 
 -- This one is called when we confirm a message was sent. The other is called
 --                            when we see we've gotten a "throttled" error.
-function Me.ChatConfirmed()   
+function Me.ChatConfirmed()
+	Me.StopLatencyRecording()
+	
+	-- Cancelling either the main 10-second timeout, or the throttled warning
+	--  timeout (see below).
 	Me.StopChatTimer()               -- Upon success, we just pop the chat
 	table.remove( Me.chat_queue, 1 ) --  queue and continue as normal.
 	Me.ChatQueue()
 end
------------------------------------ Upon failure, we wait a little while, and
-function Me.ChatFailed()         --  then retry sending the same message.
-	Me.SetChatTimer( Me.ChatFailedRetry, 3 )
+-------------------------------------------------------------------------------
+-- Upon failure, we wait a little while, and then retry sending the same
+function Me.ChatFailed()                                  --  message.
+	-- A bit of a random formula here... When ChatFailed is called, we don't
+	--  actually know if the chat failed or not quite yet. You can get the
+	--  throttle error as a pure warning, and the chat message will still go
+	--  through. There can be a large gap between the chat event and that
+	--  though, so we need to wait to see if we get the chat message still.
+	-- The amount of time we wait is at least 3 seconds, or more if they have
+	--  high latency, a maximum of ten seconds. This might be a bother to 
+	--  people who get a lag spike though, so maybe we should limit this to
+	--  be less? They DID get the chat throttled message after all.
+	local wait_time = math.min( 10, math.max( 1.5 + Me.GetLatency(), 3 ))
+	Me.SetChatTimer( Me.ChatFailedRetry, wait_time )
 	Me.SendingText_ShowFailed()  -- We also update our little indicator to show
 end                              --  this.
 
@@ -1096,6 +1144,64 @@ function Me.TryConfirm( kind, guid )
 end
 
 -------------------------------------------------------------------------------
+-- We measure the time from when a message is sent, to the time we receive
+--                                      a server event that corresponds to
+function Me.StartLatencyRecording()  -- that message.
+	Me.latency_recording = GetTime()
+end
+
+-------------------------------------------------------------------------------
+-- When we have that value, the length between the event and the start, then
+--  we don't quite set our latency value directly unless it's higher. If it's
+--  higher, then there's likely some sort of latency spike, and we can
+--  probably expect another one soonish. If it's lower, then we ease the
+function Me.StopLatencyRecording()           -- latency value towards it
+	if not Me.latency_recording then return end      -- (only use 25%).
+	
+	local time = GetTime() - Me.latency_recording
+	
+	-- Of course we do assume that something is quite wrong if we have a
+	--  value greater than 10 seconds. Things like this have their pros and
+	--  cons though. This might open up room for logical errors, where,
+	--  normally, the code would break, because somewhere along the line we
+	--  had a huge value of minutes or hours. Clamping it like this eliminates
+	--  the visibility of such a bug. The pro of this, though? The user at
+	--  least won't experience that problem. I think our logic is pretty solid
+	time = math.min( time, 10 )                                    -- though.
+	if time > Me.latency then
+		Me.latency = time
+	else
+		-- I use this interpolation pattern a lot. A * x + B * (1-x). If you
+		--  want to be super efficient, you can also do A + (B-A) * x. Things
+		--  like that are more important when you're dealing with archaic
+		--  system where multiplies are quite a bit more expensive than
+		Me.latency = Me.latency * 0.80 + time * 0.20       -- addition.
+		
+		-- It's a bit sad how everything you program for these days has tons
+		--  of power.
+	end
+	
+	-- This value is either a time (game time), or nil. If it's nil, then the
+	--  recording isn't active.
+	Me.latency_recording = nil
+end
+
+-------------------------------------------------------------------------------
+-- Read the last latency value, with some checks.
+--
+function Me.GetLatency()
+	local _, _, latency_home = GetNetStats()
+	
+	-- The game's latency recording is still decent enough for a floor value.
+	-- And our ceiling is 10 seconds. Anything higher than that, and you're
+	--  probably going to be seeing a lot of other timeout problems...
+	local latency = math.max( Me.latency, latency_home/1000 ) 
+	latency = math.min( latency, 10.0 )     --        ^^^^^
+	                                          --  milliseconds
+	return latency
+end
+
+-------------------------------------------------------------------------------
 -- Our handle for the CHAT_MSG_SYSTEM event.
 --
 function Me:OnChatMsgSystem( event, message, sender, _, _, target )
@@ -1110,13 +1216,33 @@ function Me:OnChatMsgSystem( event, message, sender, _, _, target )
 	--  isn't going to be anything that may slightly modify the message to make
 	--  this not work.
 	if message == ERR_CHAT_THROTTLED and sender == "" then
+		-- Something to think about and probably be wary of is this system
+		--  error popping up randomly and throwing off our latency measurement.
+		-- We still have a minimal safety net at least to avoid any problems
+		--  of this being too low. Also, as far as I'm aware, we're personally
+		--  handling anything that can cause this error, so it's in our field.
+		-- Still, something of a concern, that.
+		Me.StopLatencyRecording()
+		
 		-- So we got a throttle error here, and we want to retry.
-		-- An bizarre note to take into account here is that ChatConfirmed 
-		--  may STILL trigger after this error shows up. We have a few seconds
-		--  of delay to try and avoid that corner case, but otherwise with some
-		--  crazy bad luck and latency, you might be seeing some double
-		--  messages being sent.
-		-- If we do get a chat confirmed during our "waiting" period, we cancel
+		-- Actually, this doesn't necessarily mean that we need to retry. It's
+		--  a bit of a shitty situation that Blizzard has for us.
+		-- ERR_CHAT_THROTTLED is used as both a warning as an error. If your
+		--  chat message is discarded, you will always get this system error,
+		--  once per message lost. BUT you can also get this error as a
+		--  warning. If you send a lot of chat, you may get it, but all of your
+		--  messages will go through anyway.
+		-- We don't know if this is a warning or a failed message, so to be
+		--  safe (as much as we can be), we wait for a few seconds before
+		--  assuming that the message was indeed lost. It'd be nice if they
+		--  actually gave us a different error if the message was actually
+		--  lost.
+		-- If you have crazy bad latency, Emote Splitter might accidentally
+		--  send two of one of your messages, because there was a big enough
+		--  gap between a "warning" version of this, and then your actual
+		--  chat message. In other words, this error can show up seconds before
+		--  your chat message shows up.
+		-- If we do see the chat confirmed during our waiting period, we cancel
 		Me.ChatFailed() -- it and then continue as normal.
 	end
 end

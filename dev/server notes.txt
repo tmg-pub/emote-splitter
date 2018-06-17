@@ -1,0 +1,28 @@
+SendChatMessage reply may be either
+
+  a throttle error (failure)
+  a chat message event (success)
+  both. the server may send a throttle error AND the chat message
+  the throttle message may arrive before the chat messages
+  
+  if you send multiple chat messages at once, and there are throttle
+   errors, then the errors arrive first, and then the chat messages after
+   
+  i assume that this can be split up due to some of your chat messages
+   arriving later than others.
+   
+  but in essence, whatever batch of chat messages the server receives, it
+   goes over them, processes them, and if they're "too much" it queues
+   errors to send back first BEFORE any of the chat messages in the batch
+   and then queues them after
+   
+  afaik there is one guarantee, that you will receive the chat message event
+  OR the throttle error. with the throttle error, the message may be discarded
+  
+  with exceptional lag, you might encounter this problem:
+  
+    send a chat message
+    receive the throttle error
+    the short timeout expires before we try to resend the message
+    we resend the message
+    the message from the LAST output we receive now,
