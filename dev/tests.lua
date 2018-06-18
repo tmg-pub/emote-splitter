@@ -58,12 +58,12 @@
 
 	local function f()
 
-		for i = 1, 10 do
+		for i = 1, 5 do
 			SendChatMessage( "test message " .. i .. " " .. string.rep( "/", 30 ), "SAY" )
 		end
 		iterations = iterations + 1
 		print( "ITERATION " .. iterations )
-		if iterations >= 200 then
+		if iterations >= 25 then
 			--[[ print results after waiting for the last messages ]]
 
 			print( "Waiting before results..." )
@@ -76,7 +76,7 @@
 				print( "fails = " .. failures )
 			end)
 		else
-			C_Timer.After( 0.200, f )
+			C_Timer.After( 10.000, f )
 		end
 	end
 	f()
