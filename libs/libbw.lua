@@ -237,7 +237,11 @@ function libbw:SendAddonMessage(prefix, text, kind, target, priorityName, queueN
 	if not pool.queueing and length <= UpdateAvail(pool) then
 		pool.avail = pool.avail - length
 		isSending = true
-		SendAddonMessage(prefix, text, kind, target)
+		if C_ChatInfo then
+			C_ChatInfo( SendAddonMessage(prefix, text, kind, target) )
+		else
+			SendAddonMessage(prefix, text, kind, target)
+		end
 		isSending = false
 		if callbackFn then
 			SafeCall(callbackFn, callbackArg, true)
@@ -246,7 +250,7 @@ function libbw:SendAddonMessage(prefix, text, kind, target, priorityName, queueN
 	end
 
 	local message = {
-		f = SendAddonMessage,
+		f = C_ChatInfo and C_ChatInfo.SendAddonMessage or SendAddonMessage,
 		[1] = prefix,
 		[2] = text,
 		[3] = kind,
@@ -459,9 +463,15 @@ libbw.hooks.RestartGx()
 
 for name, func in pairs(libbw.hooks) do
 	if not libbw.isHooked[name] then
-		hooksecurefunc(name, function(...)
-			return libbw.hooks[name](...)
-		end)
+		if name == "SendAddonMessage" then
+			hooksecurefunc(C_ChatInfo,name, function(...)
+				return libbw.hooks[name](...)
+			end)
+		else
+			hooksecurefunc(name, function(...)
+				return libbw.hooks[name](...)
+			end)
+		end
 		libbw.isHooked[name] = true
 	end
 end
