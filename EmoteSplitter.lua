@@ -43,6 +43,8 @@
 --  EmoteSplitter, no spaces), and a special table. We use this table to pass
 local AddonName, Me = ...  -- around info from our other files.
 
+local PLAYER_GUID = UnitGUID("player")
+
 -- We're embedding our "AceAddon" into that table. 
 LibStub("AceAddon-3.0"):NewAddon(-- AceAddon lets us do that
 	-- by passing it into here as the first argument, so it doesn't create
@@ -69,8 +71,8 @@ local L = Me.Locale -- Easy access to our locale data.
 --  pass to SendChatMessage.
 --    msg: The message text.
 --    type: "SAY" or "EMOTE" etc.
---    lang: Language index.
---    channel: Channel, whisper target, or BNet presenceID.
+--    arg3: Language index or club ID.
+--    target: Channel, whisper target, BNet presence ID, or club stream ID.
 --
 Me.chat_queue = {} -- This is a FIFO, first-in-first-out, 
                    --  queue[1] is the first to go.
@@ -80,19 +82,6 @@ Me.chat_queue = {} -- This is a FIFO, first-in-first-out,
 Me.chat_busy   = false -- messages being sent. This isn't used for messages
                        --  not queued (party/raid/whisper etc).
 -------------------------------------------------------------------------------
--- Hooks for our chat throttler (libbw). We hook these functions because we
---  want all messages going through our chat queue system; this is mostly just
-Me.throttler_hook_sendchat = nil -- to catch other addons trying to use
-Me.throttler_hook_bnet     = nil --  these APIs.
-                                 --
--- The throttle lib that we're using. This is pretty much always `libbw` unless
---  something might change in the future where we support multiple. As of right
-Me.throttle_lib            = nil -- now though, libbw is the only one that 
-                                 --  supports Battle.net messages.
--- You might have some questions, why I'm setting these table values to nil 
---  (which effectively does nothing), but it's just to keep things well 
---  defined up here.
--------------------------------------------------------------------------------
 -- Our list of chat filters. This is a collection of functions that can be
 --  added by other third parties to process messages before they're sent.
 -- It's much cleaner or safer to do that with these rather than them hooking
@@ -100,17 +89,12 @@ Me.throttle_lib            = nil -- now though, libbw is the only one that
 Me.chat_filters = {} -- if their hook fires before or after the message is
                      --  cut up by our functions.
 -------------------------------------------------------------------------------
--- Fastpost is a special feature that lets us bypass the chat throttler
---  altogether. Normally, if you use the chat throttler for everything, there
---  might be a bit of a (noticable) delay to your messages when chatting
---  normally.
--- With a little bit of cheating, we allow direct use of SendChatMessage or
---  what have you every so often (defined by the period below).
--- The chat throttler libs leave some extra bandwidth for just this, so we're
--- just utilizing it.
-local FASTPOST_PERIOD  = 0.5    -- 500 milliseconds. If they post faster than
-                                -- that, then their subsequent messages will be
-								-- passed to the throttler like normal.
+-- We count failures when we get a chat error. Some of the errors we get
+--  (particularly from the communities API) are vague, and we don't really
+--  know if we should keep re-sending. This limit is to stop resending after
+--  so many of those errors.
+Me.failures = 0
+local FAILURE_LIMIT = 5
 -------------------------------------------------------------------------------
 -- Time to allow the chat queue to wait for a message to be confirmed before we
 local CHAT_TIMEOUT = 10.0 -- give up and show an error.
@@ -123,17 +107,7 @@ local CHAT_THROTTLE_WAIT = 3.0
 -- to the presenceID. If the presenceID is >= this constant, then we're in the
 local BNET_FLAG_OFFSET = 100000 -- throttler's message loop. Otherwise, we're
                                 -- handling an organic call.
--------------------------------------------------------------------------------
--- The number of messages waiting to be handled by the chat throttler. This 
---  isn't the number of messages that we have queued in the chat-queue above, 
---  no; it's the number that we've already passed to the throttler. This might 
---  not even get past 0 during most normal use of the addon, as there is 
-Me.messages_waiting = 0 -- usually plenty of excess bandwidth to send chat 
-                        --  messages immediately.
--------------------------------------------------------------------------------
--- This is the last time when a post was posted using our "fast-post" hack.
-Me.fastpost_time = 0 -- At least FASTPOST_PERIOD seconds must pass before we 
-                     --  skip the throttler again.
+
 -------------------------------------------------------------------------------
 -- Normally this isn't touched. This was a special request from someone who
 --  was having trouble using the stupid addon Tongues. Basically, this is used
@@ -142,6 +116,8 @@ Me.max_message_length = 255 -- have some extra room to work with, making the
                             --  message longer and such. It's wasteful, but
                             --                                    it works.
 Me.club_chunk_size = 400
+Me.bnet_chunk_size = 400
+Me.guild_chunk_size = 400
 -------------------------------------------------------------------------------
 -- We do some latency tracking ourselves, since the one provided by the game
 --  isn't very accurate at all when it comes to recent events. The one in the
@@ -151,6 +127,9 @@ Me.club_chunk_size = 400
 Me.latency           = 0.1  -- message, and then get the time difference 
 Me.latency_recording = nil  --         when we receive a server event.
                             -- Our value is in seconds.
+-- You might have some questions, why I'm setting some table values to nil 
+--  (which effectively does nothing), but it's just to keep things well 
+--  defined up here.
 -------------------------------------------------------------------------------
 -- A lot of these definitions used to be straight local variables, but this is
 --  a little bit cleaner, keeping things inside of this "Me" table, as well
@@ -206,6 +185,7 @@ end
 -- Here's the real initialization code. This is called after all addons are 
 --                                     -- initialized, and so is the game.
 function Me:OnEnable()
+	PLAYER_GUID = UnitGUID( "player" )
 	-- We definitely cannot work if UnlimitedChatMessage is enabled at the
 	--  same time. If we see that it's loaded, then we cancel our operation
 	if UCM then -- in favor of it. Just print a notice instead. Better than 
@@ -241,11 +221,17 @@ function Me:OnEnable()
 	Me:RegisterEvent( "CHAT_MSG_YELL", function( ... )
 		Me.TryConfirm( "YELL", select( 13, ... ))
 	end)
+	if C_Club then -- 7.x compat
+		Me:RegisterEvent( "CHAT_MSG_COMMUNITIES_CHANNEL", Me.OnChatMsgCommunitiesChannel )
+		Me:RegisterEvent( "CHAT_MSG_GUILD", Me.OnChatMsgGuildOfficer )
+		Me:RegisterEvent( "CHAT_MSG_OFFICER", Me.OnChatMsgGuildOfficer )
+		Me:RegisterEvent( "CLUB_ERROR", Me.OnClubError )
+	end
 	-- Battle.net whispers aren't affected by the server throttler, but they
 	--  can still appear out of order if multiple are sent at once, so we send
 	--  them "safely" too.
 	Me:RegisterEvent( "CHAT_MSG_BN_WHISPER_INFORM", function()
-		Me.TryConfirm( "BNET", UnitGUID( "player" ))
+		Me.TryConfirm( "BNET", PLAYER_GUID )
 	end)
 	
 	-- And finally we hook the system chat events, so we can catch when the
@@ -259,7 +245,7 @@ function Me:OnEnable()
 	--  `Me.hooks.FunctionName`. In other words, it's a pre-hook that can
 	Me:RawHook( "SendChatMessage", Me.SendChatMessageHook, true ) -- modify or cancel the result.
 	Me:RawHook( "BNSendWhisper", Me.BNSendWhisperHook, true  )   -- 
-	if C_Club then
+	if C_Club then -- 7.x compat
 		Me:RawHook( C_Club, "SendMessage", Me.ClubSendMessageHook, true )   -- 
 	end
 	-- And here's a normal hook. It's still a pre-hook, in that it's called
@@ -274,7 +260,7 @@ function Me:OnEnable()
 		local editbox = _G["ChatFrame" .. i .. "EditBox"]
 		editbox:SetMaxLetters( 0 )
 		editbox:SetMaxBytes( 0 )
-		if editbox.SetVisibleTextByteLimit then  -- For patch 8.0.
+		if editbox.SetVisibleTextByteLimit then  -- 7.x compat
 			editbox:SetVisibleTextByteLimit( 0 ) --
 		end                                      --
 	end
@@ -340,7 +326,7 @@ function Me:ChatEdit_OnShow( editbox ) -- someone is about to type!
 	editbox:SetMaxLetters( 0 ); -- We're just removing the limit again here.
 	editbox:SetMaxBytes( 0 );   -- Extra prudency, in case some rogue addon, or
 	                            --  even the Blizzard UI, messes with it.
-	if editbox.SetVisibleTextByteLimit then  -- For patch 8.0.
+	if editbox.SetVisibleTextByteLimit then  -- 7.x compat
 		editbox:SetVisibleTextByteLimit( 0 ) --
 	end										 --
 end 
@@ -373,21 +359,21 @@ end
 -- 
 -- The signature for the callback function (filter_function) is:
 --
---   function( text, chat_type, language, channel )
+--   function( text, chat_type, arg3, target )
 --
 -- Arguments passed to it are fairly straightforward, and the same are
 --  passed to SendChatMessage.
 --
 --   text:      The message text.
 --   chat_type: "SAY", "EMOTE" etc, may also be "BNET" for BNet whispers.
---   language:  Language ID (a number)
---   channel:   Channel name or whisper target for WHISPER chatType. This is
---               also presenceID for BNet whispers. (For BNSendWhisper API)
+--   arg3:      Language ID (a number), or club ID
+--   target:    Depending on chat_type this is either a channel name, a
+--               whisper target, a presence ID, or a community stream ID.
 --
 --   Return false from this function to block the message from being send--to
 --    discard it. Return nothing (nil) to have the filter do nothing, and let
 --    the message pass through.
---   Otherwise, `return text, chat_type, language, channel` to modify the chat
+--   Otherwise, `return text, chat_type, arg3, target` to modify the chat
 --    message. Take extra care to make sure that you're only setting these to
 --    valid values.
 --
@@ -426,50 +412,6 @@ function Me.GetChatFilters() -- write something that 'previews' outgoing
 	return Me.chat_filters   -- messages, and would use this to apply the    
 end                          -- chat filters themselves and see how it works 
                              -- out.
--------------------------------------------------------------------------------
--- This is our hook for LIBBW's SendChatMessage
---[[
-function Me.LIBBW_SendChatMessage( libself, text, kind, lang, target, ... ) 
-	-- This is an organic call from outside, as we don't call this hooked
-	-- function directly. It's something else calling it.
-	
-	-- We just want to catch if it's a "public emote" or one of the public chat
-	kind = kind:upper() -- types, which we want to pass to our queue instead of
-	if kind == "SAY" or kind == "EMOTE" -- letting them go through.
-	   or kind == "YELL" then
-		Me.QueueChat( text, kind, lang )
-		return
-	end
-	
-	-- If it's another chat type, we pass it directly back to the throttler.
-	-- We don't really take a lot of care with messages being passed to the
-	--  throttler directly by addons, and can assume that they don't need them
-	--  to be cut up or anything.
-	-- We just need to mark the target (channel) parameter to signal that we
-	--  had this message looked at. The #ES flag prefixing the target argument
-	--  is what our SendChatMessage hook looks for to know that the message
-	--  is a call from the throttler lib rather than organic.
-	Me.throttler_hook_sendchat( libself, text, kind, lang, 
-	                            "#ES" .. (target or ""), ... )
-end]]
-
--------------------------------------------------------------------------------
--- Here's our hook for LIBBW's BNSendWhisper
---[[
-function Me.LIBBW_BNSendWhisper( libself, presenceID, text, ... )
-	-- Like above, we don't call this directly. It's an organic call that we
-	--  want to reroute to our chat queue. BNet whispers aren't affected by the
-	--  server throttler, but we still handle them like they are, since there's
-	--  an issue with them being sent out-of-order sometimes if you send them
-	--  all at once.
-	-- Basically, by having Emote Splitter installed, then any messages sent
-	--  by addons through Libbw's API are ensured to be in the right order when
-	Me.QueueChat( text, "BNET", nil, presenceID ) -- received.
-	
-	-- In the future ChatThrottleLib might also have a BNet whisper function
-	--  (which in turn a lot of addons might use) which libbw should also take
-	--  control of.
-end]]
 
 -------------------------------------------------------------------------------
 -- Function for splitting text on newlines or newline markers (literal "\n").
@@ -506,7 +448,7 @@ end
 -- Our hook for SendChatMessage in the WoW API. This is where the magic begins.
 --
 function Me.SendChatMessageHook( msg, chat_type, language, channel )
-	
+
 	Me.ProcessIncomingChat( msg, chat_type, language, channel )
 end
 
@@ -519,10 +461,30 @@ function Me.BNSendWhisperHook( presence_id, message_text )
 end
 
 function Me.ClubSendMessageHook( club_id, stream_id, message )
-	Me.ProcessIncomingChat( message, "CLUB", club_id, stream_id, Me.club_chunk_size )
+	Me.ProcessIncomingChat( message, "CLUB", club_id, stream_id )
 end
 
-function Me.ProcessIncomingChat( msg, chat_type, arg3, target, chunk_size )
+local function GetGuildClub()
+	for _, club in pairs( C_Club.GetSubscribedClubs() ) do
+		if club.clubType == Enum.ClubType.Guild then
+			return club.clubId
+		end
+	end
+end
+
+local function GetGuildStream( type )
+	local guild_club = GetGuildClub()
+	if guild_club then
+		for _, stream in pairs( C_Club.GetStreams( guild_club )) do
+			if stream.streamType == type then
+				return guild_club, stream.streamId
+			end
+		end
+	end
+end
+
+function Me.ProcessIncomingChat( msg, chat_type, arg3, target )
+	msg = tostring(msg or "")
 	for _, filter in ipairs( Me.chat_filters ) do
 		local a, b, c, d = filter( msg, chat_type, language, channel )
 		
@@ -542,6 +504,38 @@ function Me.ProcessIncomingChat( msg, chat_type, arg3, target, chunk_size )
 	--  passing it through this line splitting function, which gives us a table
 	msg = Me.SplitLines( msg )  -- of lines, or just { msg } if there aren't
 	                              --  any newlines.
+								  
+	local chunk_size = Me.max_message_length
+	if chat_type == "CHANNEL" then
+		local _, channel_name = GetChannelName( target )
+		if channel_name then
+			local club_id, stream_id = channel_name:match( "Community:(%d+):(%d+)" )
+			if club_id then
+				-- this is a community message, reroute this message...
+				chat_type  = "CLUB"
+				arg3       = club_id
+				target     = stream_id
+				chunk_size = Me.club_chunk_size
+			end
+		end
+	elseif chat_type == "GUILD" or chat_type == "OFFICER" then
+		if C_Club then -- 7.x compat
+			chunk_size = Me.guild_chunk_size
+			local club_id, stream_id = GetGuildStream( chat_type == "GUILD" and Enum.ClubStreamType.Guild or Enum.ClubStreamType.Officer )
+			if not club_id then
+				local info = ChatTypeInfo["SYSTEM"];
+				DEFAULT_CHAT_FRAME:AddMessage( ERR_GUILD_PLAYER_NOT_IN_GUILD, info.r, info.g, info.b, info.id );
+				return
+			end
+			arg3   = club_id
+			target = stream_id
+			chat_type = "CLUB"
+		end
+	elseif chat_type == "BNET" then
+		chunk_size = Me.bnet_chunk_size
+	elseif chat_type == "CLUB" then
+		chunk_size = Me.club_chunk_size
+	end
 	-- And we iterate over each, pass them to our main splitting function (the
 	--  one that cuts them to 255-character lengths), and then feed them off
 	--  to our main chat queue system. That call might even bypass our queue
@@ -785,36 +779,6 @@ function Me.SendingText_Hide()
 end
 
 -------------------------------------------------------------------------------
--- Our callback function for when the chat throttler puts out one of our
---  messages. We don't really care about the parameters. I don't really like
---  this a whole lot, to be honest. It's not really "robust". Just imagine if
---  there's some sort of error somewhere. We're going to be stuck with this
---  counter at non-zero, with our system locking up because it thinks it's
---  busy. Could really use something on the side to check up on this, to make
---                           -- sure that it's not getting stuck.
-local function OnCTL_Sent( recordLatency )
-	-- When we call SendChatMessage, we can pass an argument to this callback
-	--  function. That's not something too uncommon in the API world. This is
-	--  set to true when we're sending a chat type that goes through our
-	--  queue system. We record the time from this point up until we get an
-	if recordLatency then                -- error or the chat confirmation.
-		Me.StartLatencyRecording()
-	end
-	-- I'm not 100% sure why we even have this little system, but as far as I
-	--  know, it's meant for the FastPost feature, which is used to bypass
-	--  the throttler at times when it's not busy.
-	Me.messages_waiting = Me.messages_waiting - 1
-	
-	-- The sending indicator shows up under two conditions. One is when the
-	--  throttler is busy. It's shown when we return from the throttle lib
-	--  with messages waiting (messages_waiting ~= 0). Most of the time it's
-	--  shown because the system is busy (chat_busy = true).
-	if not Me.chat_busy and Me.messages_waiting == 0 then
-		Me.SendingText_Hide()
-	end
-end
-
--------------------------------------------------------------------------------
 -- Our simple little thing to handle timeouts for the chat queue. This calls
 -- `func` after `delay` seconds, and also has a feature so you can cancel the 
 --                                      -- timer. This is designed so you only
@@ -839,7 +803,23 @@ function Me.StopChatTimer()         -- And to cancel the timer, we just set the
 		Me.chat_timer.cancel = true --
 	end                             --
 end                                 --
-                                    --
+                                    --								
+									
+local QUEUED_TYPES = {
+	SAY = true;
+	EMOTE = true;
+	CLUB = true;
+	BNET = true;
+	GUILD = true;
+	OFFICER = true;
+}
+
+-- 7.x compat
+if not C_Club then
+	QUEUED_TYPES.GUILD = nil;
+	QUEUED_TYPES.OFFICER = nil;
+end
+
 -------------------------------------------------------------------------------
 -- This is our main entry into our chat queue. Basically we have the same
 --  parameters as the SendChatMessage API. For BNet whispers, set `type` to 
@@ -850,15 +830,15 @@ end                                 --
 --  lang    = Language index.
 --  channel = Channel or whisper target.
 --
-function Me.QueueChat( msg, type, lang, channel )
+function Me.QueueChat( msg, type, arg3, target )
 	type = type:upper()
 	
 	-- Now we've got two paths here. One leads to the chat queue, the other
 	--  will directly send the messages that don't need to be queued.
 	--  SAY, EMOTE, and YELL are affected by the server throttler. BNET isn't,
 	--  but we treat it the same way to correct the out-of-order bug.
-	if type == "SAY" or type == "EMOTE"         -- (As of writing, I'm assuming
-	   or type == "YELL" or type == "BNET" then --  that's still a thing.)
+	if QUEUED_TYPES[type] then        -- (As of writing, I'm assuming
+	                                  --  that's still a thing.)
 		-- A certain problem with this queue is that sometimes we'll be stuck
 		--  waiting for a response from the server, but nothing is coming
 		--  because we weren't actually able to send the chat message. There's
@@ -884,13 +864,13 @@ function Me.QueueChat( msg, type, lang, channel )
 		
 		table.insert( Me.chat_queue, {     -- It looks like we're all good to
 			msg = msg, type = type,        --  queue this puppy and start up
-			lang = lang, channel = channel --  the system.
+			arg3 = arg3, target = target --  the system.
 		})                                 --
 		Me.StartChat()                    --
 		
 	else -- For other message types like party, raid, whispers, channels, we
 		 -- aren't going to be affected by the server throttler, so we go
-		Me.CommitChat( msg, type, lang, channel ) -- straight to putting these
+		Me.CommitChat( msg, type, arg3, target ) -- straight to putting these
 	end                                          -- messages out on the line.
 end   
 
@@ -913,6 +893,7 @@ function Me.StartChat()
 	if Me.chat_busy then return end
 	if #Me.chat_queue == 0 then return end
 	Me.chat_busy = true
+	Me.failures = 0
 	
 	-- I always like APIs that have simple checks like that in place. Sure it
 	--  might be a /little/ bit less efficient at times, but the resulting code
@@ -952,14 +933,14 @@ function Me.ChatQueue()
 	--  message from being sent (and we don't know it). One known case of that
 	--  is sending a BNet message to an offline player. It's difficult to 
 	local c = Me.chat_queue[1]              -- intercept that sort of failure.
-	Me.SetChatTimer( Me.ChatTimeout, CHAT_TIMEOUT ) 
-	Me.CommitChat( c.msg, c.type, c.lang, c.channel )
+	Me.SetChatTimer( Me.ChatDeath, CHAT_TIMEOUT ) 
+	Me.CommitChat( c.msg, c.type, c.arg3, c.target )
 end
 
 -------------------------------------------------------------------------------
 -- Timer callback for when chat times out.
 --                        -- This is a bit of a fatal error, due to
-function Me.ChatTimeout() --  disconnecting or other high latency issues. (Or
+function Me.ChatDeath()   --  disconnecting or other high latency issues. (Or
 	Me.chat_queue = {}    --  some sort of corner case with the chat sending.)
 	Me.chat_busy = false
 	Me.SendingText_Hide()
@@ -975,6 +956,7 @@ end
 --                            when we see we've gotten a "throttled" error.
 function Me.ChatConfirmed()
 	Me.StopLatencyRecording()
+	Me.failures = 0
 	
 	-- Cancelling either the main 10-second timeout, or the throttled warning
 	--  timeout (see below).
@@ -984,7 +966,7 @@ function Me.ChatConfirmed()
 end
 -------------------------------------------------------------------------------
 -- Upon failure, we wait a little while, and then retry sending the same
-function Me.ChatFailed()                                  --  message.
+function Me.ChatFailed( from_club )                         --  message.
 	-- A bit of a random formula here... When ChatFailed is called, we don't
 	--  actually know if the chat failed or not quite yet. You can get the
 	--  throttle error as a pure warning, and the chat message will still go
@@ -995,8 +977,26 @@ function Me.ChatFailed()                                  --  message.
 	--  be a bother to  people who get a lag spike though, so maybe we should 
 	--  limit this to be less? They DID get the chat throttled message after
 	--  all.
-	local wait_time = 
-		math.min( 10, math.max( 1.5 + Me.GetLatency(), CHAT_THROTTLE_WAIT ))
+	
+	-- We don't want to get stuck waiting forever if this error /isn't/ caused
+	--  by some sort of throttle, so we count the errors and die after waiting
+	--  for so many.
+	Me.failures = Me.failures + 1
+	if Me.failures >= FAILURE_LIMIT then
+		Me.ChatDeath()
+		return
+	end
+	
+	-- With the 8.0 update, Emote Splitter also supports communities, which
+	--  give a more clear signal that the chat failed that's purely from
+	--  the throttler, so we don't account for latency.
+	local wait_time
+	if from_club then
+		wait_time = CHAT_THROTTLE_WAIT
+	else
+		wait_time = math.min( 10, math.max( 1.5 + Me.GetLatency(), CHAT_THROTTLE_WAIT ))
+	end
+		
 	Me.SetChatTimer( Me.ChatFailedRetry, wait_time )
 	Me.SendingText_ShowFailed()  -- We also update our little indicator to show
 end                              --  this.
@@ -1037,7 +1037,7 @@ function Me.TryConfirm( kind, guid )
 	--  you're drunk, or if you send %t which gets replaced by your target).
 	-- So... we just do it blind, instead. If we send two SAY messages and
 	--  and EMOTE in order, then we wait for two SAY events and one EMOTE
-	if guid == UnitGUID( "player" ) then -- event for confirmation.
+	if guid == PLAYER_GUID then -- event for confirmation.
 		Me.ChatConfirmed()
 	end
 end
@@ -1106,8 +1106,8 @@ end
 function Me.OnChatMsgSystem( event, message, sender, _, _, target )
 	-- We're just looking out in here for throttle errors.
 	if #Me.chat_queue == 0 then -- If the queue isn't started, then we aren't
-		-- expecting anything.
-		return 
+		                        -- expecting anything.
+		return
 	end
 	
 	-- We check message against this localized string, so if people are on a
@@ -1143,6 +1143,78 @@ function Me.OnChatMsgSystem( event, message, sender, _, _, target )
 		--  your chat message shows up.
 		-- If we do see the chat confirmed during our waiting period, we cancel
 		Me.ChatFailed() -- it and then continue as normal.
+	end
+end
+
+-------------------------------------------------------------------------------
+-- Our hook for when the client gets an error back from one of the community
+-- features.
+function Me.OnClubError( event, action, error, club_type )
+	if #Me.chat_queue == 0 then
+		-- We aren't expecting anything.
+		return 
+	end
+	
+	-- This will match the error that happens when you get throttled by the
+	--  server from sending chat messages too quickly. This error is vague
+	--  though and still matches some other things, like when the stream is
+	--  missing. Hopefully in the future the vagueness disappears so we know
+	--  what sort of error we're dealing with, but for now, we assume it is
+	--  a throttle, and then retry a number of times. We have a failure
+	--  counter that will stop us if we try too many times (where we assume
+	--  it's something else causing the error).
+	if action == Enum.ClubActionType.ErrorClubActionCreateMessage 
+	   and error == Enum.ClubErrorType.ErrorCommunitiesUnknown then
+		Me.ChatFailed( true )
+	end
+end
+
+-------------------------------------------------------------------------------
+-- Our hook for CHAT_MSG_GUILD and CHAT_MSG_OFFICER.
+--
+function Me.OnChatMsgGuildOfficer( event, _,_,_,_,_,_,_,_,_,_,_, guid )
+	-- These are a fun couple of events, and very messy to deal with. Maybe the
+	--  API might get some improvements in the future, but as of right now
+	--  these show up without any sort of data what club channel they're coming
+	--  from. We just sort of gloss over everything.
+	local cq = Me.chat_queue[1]
+	if not cq then return end
+	
+	if guid ~= PLAYER_GUID then return end
+	event = event:sub( 10 )
+	
+	-- Typically cq.type will always be CLUB for these, but we handle this
+	--  anyway.
+	if cq.type == event then
+		Me.ChatConfirmed()
+	elseif cq.type == "CLUB" and cq.arg3 == GetGuildClub() then
+		-- arg3 is the club ID, and if it's the guild club, then our CLUB
+		--  message is indeed expecting OFFICER or GUILD chat type.
+		Me.ChatConfirmed()
+	end
+end
+
+-------------------------------------------------------------------------------
+-- Hook for when we received a message on a community channel.
+--
+function Me.OnChatMsgCommunitiesChannel( event, _,_,_,_,_,_,_,_,_,_,_, 
+                                         guid, bn_sender_id )
+	local cq = Me.chat_queue[1]
+	if not cq then return end
+	if cq.type ~= "CLUB" then return end
+	
+	-- This event seems to show up in a few formats. Thankfully, it always
+	--  shows up when you receive a club message, regardless of whether or not
+	--  you have subscribed to that channel in your chatboxes. One gotcha with
+	--  this message is that it's split between Battle.net (or "Blizzard Chat"
+	--  I guess..) and regular chat messages. For BNet ones the guid is nil,
+	--  and the argument after is the BNet presence ID instead.
+	-- We have a few extra checks down there for prudency, in case something
+	--  changes in the future.
+	if guid and guid == PLAYER_GUID then
+		Me.ChatConfirmed()
+	elseif bn_sender_id and bn_sender_id ~= 0 and BNIsSelf(bn_sender_id) then
+		Me.ChatConfirmed()
 	end
 end
 

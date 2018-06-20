@@ -26,15 +26,13 @@ local DB_DEFAULTS = {
 		premark         = "»"; -- feature.
 		postmark        = "»";
 		
-		-- Fastpost is now a hidden feature, as it doesn't make much sense to
-		--  turn it off. Basically it allows the system to bypass the chat
-		fastpost        = true;  -- throttler at times during low operation.
-		
 		-- This option hides failure messages in the chatbox, like the system
 		hidefailed      = true;  -- message you get when your chat is throttled.
 		
 		-- This option enables the "Sending..." indicator at the corner of the
 		showsending     = true;  -- screen.
+		
+		slowpost        = false;
 		
 		-- This option enables ctrl-z/ctrl-y functionality in the editbox.
 		-- It's called protection and not something like undo because it's
