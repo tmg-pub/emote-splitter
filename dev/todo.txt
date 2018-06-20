@@ -1,0 +1,1 @@
+remove character limit from communities chat (this frame isn't loaded until you open the guild pane.)

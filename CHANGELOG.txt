@@ -1,4 +1,4 @@
-## 1.3.5
+## 1.4.0
 Patch 8.0 support with communities chat.
 
 Improvements to handle severe latency.

@@ -32,7 +32,10 @@ local DB_DEFAULTS = {
 		-- This option enables the "Sending..." indicator at the corner of the
 		showsending     = true;  -- screen.
 		
-		slowpost        = false;
+		-- slowpost causes the throttler to always start after sending a
+		--  message. In other words, when you're sending a message to a private
+		--  channel, it'll always be sent in smaller chunks. It's merely an
+		slowpost        = false;  -- aesthetic change.
 		
 		-- This option enables ctrl-z/ctrl-y functionality in the editbox.
 		-- It's called protection and not something like undo because it's
@@ -226,6 +229,24 @@ local OPTIONS_TABLE = {
 			--  always adjust what we want afterwards. Maybe that's a pro of
 			--  not setting everything up directly in the table, and assigning
 			--  it from the outside--more flexibility.
+		};
+		
+		-----------------------------------------------------------------------
+		-- I always struggle with trying to make things concise. Too little
+		--  text or vague terms and the user won't understand. Too much
+		--  clarification, and they just get confused or overwhelmed.
+		--  This is where communication skills come into play, hm? Gotta think
+		--  like an idiot to write for an idiot.
+		slowpost = {
+			name  = L["Slow Post"];
+			desc  = L["A purely aesthetic option to make Emote Splitter post only one or two messages at a time instead of all at once."];
+			order = 70;
+			type  = "toggle";
+			width = "full";
+			set = function( info, val ) 
+				Me.db.global.slowpost = val 
+			end;
+			get = function( info ) return Me.db.global.slowpost end;
 		};
 		
 	};

@@ -92,12 +92,22 @@ Me.chat_filters = {} -- if their hook fires before or after the message is
 -- We count failures when we get a chat error. Some of the errors we get
 --  (particularly from the communities API) are vague, and we don't really
 --  know if we should keep re-sending. This limit is to stop resending after
---  so many of those errors.
-Me.failures = 0
-local FAILURE_LIMIT = 5
+Me.failures = 0                                --  so many of those errors.
+local FAILURE_LIMIT = 5                        --
 -------------------------------------------------------------------------------
--- Time to allow the chat queue to wait for a message to be confirmed before we
-local CHAT_TIMEOUT = 10.0 -- give up and show an error.
+-- Settings for the timers in the chat queue. CHAT_TIMEOUT is how much time it
+--  will wait before assuming that something went wrong. In an ideal setup,
+--  this is typically unnecessary, because chat messages are guaranteed to make
+--  the server give you a response, be it the chat event or an error. If you
+--  don't get a response, then you disconnect. However, if something goes wrong
+--  on our end, we could typically be waiting forever for nothing, which is
+--  what this is for. In other words, it's not a timeout for latency, it's a
+--  timeout before assuming we screwed up.
+-- CHAT_THROTTLE_WAIT is for when we intercept an error. We wait this many
+--  seconds before resuming. We also have some latency detection code to
+--  add on top, but this is the minimum value. The latency value isn't used or
+--  necessary when we know that our message didn't send, like when sending
+local CHAT_TIMEOUT = 10.0                          -- community messages.
 local CHAT_THROTTLE_WAIT = 3.0
 -------------------------------------------------------------------------------
 -- We need to get a little bit creative when determining whether or not
@@ -115,8 +125,17 @@ local BNET_FLAG_OFFSET = 100000 -- throttler's message loop. Otherwise, we're
 Me.max_message_length = 255 -- have some extra room to work with, making the 
                             --  message longer and such. It's wasteful, but
                             --                                    it works.
-Me.club_chunk_size = 400
-Me.bnet_chunk_size = 400
+-------------------------------------------------------------------------------
+-- Patch 8.0 gives us some more values here. From testing, the community API
+--  lets you send messages that are as long as 4000 characters. The textboxes
+--  are still limited to 255 characters, but we bump this up to a nice 400
+--  characters per message. If you have too big of a value, then it just makes
+--  the user interface unmanagable, since you cannot partially scroll past one
+--  of the messages. Each message is one scroll tick.
+-- This is also a thing with BNet whispers. I'm not 100% sure what the limit is
+--  for those, but it's not as low as 255.
+Me.club_chunk_size  = 400
+Me.bnet_chunk_size  = 400
 Me.guild_chunk_size = 400
 -------------------------------------------------------------------------------
 -- We do some latency tracking ourselves, since the one provided by the game
@@ -222,6 +241,11 @@ function Me:OnEnable()
 		Me.TryConfirm( "YELL", select( 13, ... ))
 	end)
 	if C_Club then -- 7.x compat
+		-- In 8.0, GUILD and OFFICER chat are no longer normie communication
+		--  channels. They're just routed into the community API internally.
+		-- The worst part about this is that they still show up (as of writing)
+		--  as CHAT_MSG_GUILD or CHAT_MSG_OFFICER and don't show any sort of
+		--  indication of what channel within the guild they're from.
 		Me:RegisterEvent( "CHAT_MSG_COMMUNITIES_CHANNEL", Me.OnChatMsgCommunitiesChannel )
 		Me:RegisterEvent( "CHAT_MSG_GUILD", Me.OnChatMsgGuildOfficer )
 		Me:RegisterEvent( "CHAT_MSG_OFFICER", Me.OnChatMsgGuildOfficer )
@@ -260,9 +284,13 @@ function Me:OnEnable()
 		local editbox = _G["ChatFrame" .. i .. "EditBox"]
 		editbox:SetMaxLetters( 0 )
 		editbox:SetMaxBytes( 0 )
+		-- A Blizzard dev added this function just for us. Without this, it
+		--  would be absolute hell to get this addon to work with the default
+		--  chat boxes, if not impossible. I'd have to create a whole new
+		--  chatting interface.
 		if editbox.SetVisibleTextByteLimit then  -- 7.x compat
-			editbox:SetVisibleTextByteLimit( 0 ) --
-		end                                      --
+			editbox:SetVisibleTextByteLimit( 0 )
+		end
 	end
 	
 	-- We hook our cat throttler too, which is currently LIBBW from XRP's 
@@ -317,8 +345,12 @@ function Me:OnEnable()
 	f:SetFrameStrata( "DIALOG" )    -- DIALOG is a high strata that appears
 	Me.sending_text = f             --  over most other normal things.
 	
-	Me.EmoteProtection.Init() -- Finally, we pass off our initialization to 
-end                           --  the undo/redo feature.
+	-- Initialize other modules here.
+	Me.EmoteProtection.Init()
+	
+	-- And now our compatibility code.
+	Me.MisspelledCompatibility()
+end
 
 -------------------------------------------------------------------------------
 -- This is our hook for when a chat editbox is opened. Or in other words, when
@@ -445,16 +477,14 @@ function Me.SplitLines( text )   --
 end
 
 -------------------------------------------------------------------------------
--- Our hook for SendChatMessage in the WoW API. This is where the magic begins.
+-- Our hooks just basically do some routing, rearrange the parameters for our
+-- main ProcessIncomingChat function.
 --
 function Me.SendChatMessageHook( msg, chat_type, language, channel )
 
 	Me.ProcessIncomingChat( msg, chat_type, language, channel )
 end
 
--------------------------------------------------------------------------------
--- Our hook for BNSendWhisper in the WoW API.
---
 function Me.BNSendWhisperHook( presence_id, message_text ) 
 	
 	Me.ProcessIncomingChat( message_text, "BNET", nil, presence_id )
@@ -464,7 +494,15 @@ function Me.ClubSendMessageHook( club_id, stream_id, message )
 	Me.ProcessIncomingChat( message, "CLUB", club_id, stream_id )
 end
 
+-------------------------------------------------------------------------------
+-- Returns the club ID for the user's guild, or nil if they aren't in a guild
+--  or if it can't otherwise find it.
+--
 local function GetGuildClub()
+	-- This is kind of poor that we have to do this scan for every chat
+	--  message. But it helps to think about it like some sort of block of
+	--  generic code that has to be run for sending chat. Chat isn't all
+	--  that common though, so we can get away with stuff like this.
 	for _, club in pairs( C_Club.GetSubscribedClubs() ) do
 		if club.clubType == Enum.ClubType.Guild then
 			return club.clubId
@@ -472,6 +510,11 @@ local function GetGuildClub()
 	end
 end
 
+-------------------------------------------------------------------------------
+-- Gets the stream for the main "GUILD" channel or "OFFICER" channel.
+-- Type is from Enum.ClubStreamType, and it should be
+--  Enum.ClubStreamType.Guild or Enum.ClubStreamType.Officer
+-- Returns nil if not in a guild or if it can't find it.
 local function GetGuildStream( type )
 	local guild_club = GetGuildClub()
 	if guild_club then
@@ -483,6 +526,13 @@ local function GetGuildStream( type )
 	end
 end
 
+-------------------------------------------------------------------------------
+-- This is where the magic happens...
+--
+-- Our parameters don't only accept the ones from SendChatMessage.
+-- We also add the chat type "BNET" where target is the presence ID, and "CLUB"
+--  where arg3 is the club ID, and target is the stream ID.
+--
 function Me.ProcessIncomingChat( msg, chat_type, arg3, target )
 	msg = tostring(msg or "")
 	for _, filter in ipairs( Me.chat_filters ) do
@@ -504,14 +554,27 @@ function Me.ProcessIncomingChat( msg, chat_type, arg3, target )
 	--  passing it through this line splitting function, which gives us a table
 	msg = Me.SplitLines( msg )  -- of lines, or just { msg } if there aren't
 	                              --  any newlines.
-								  
+	
+	-- We do some work here in rerouting some messages to avoid using
+	--  SendChatMessage, specifically with ones that use the Club API. It's
+	--  probably sending it there internally, but we can do that ourselves
+	--  so we can take advantage of the fact that the Club API allows a 
+	--  larger max message length. By default we split those types of messages
+	--  up at the 400 character mark rather than 255.
 	local chunk_size = Me.max_message_length
 	if chat_type == "CHANNEL" then
+		-- Chat type CHANNEL can either be a normal legacy chat channel, or the
+		--  user can be typing in a chat channel that's linked to a community
+		--  channel. This is only done through the normal chatbox. If you type
+		--  in the community panel, it goes straight to C_Club:SendMessage.
 		local _, channel_name = GetChannelName( target )
 		if channel_name then
+			-- GetChannelName returns a specific string for club channels:
+			--   Community:<club ID>:<stream ID>
 			local club_id, stream_id = channel_name:match( "Community:(%d+):(%d+)" )
 			if club_id then
-				-- this is a community message, reroute this message...
+				-- This is a community message, reroute this message to use
+				--  C_Club directly...
 				chat_type  = "CLUB"
 				arg3       = club_id
 				target     = stream_id
@@ -519,25 +582,44 @@ function Me.ProcessIncomingChat( msg, chat_type, arg3, target )
 			end
 		end
 	elseif chat_type == "GUILD" or chat_type == "OFFICER" then
+		-- For GUILD and OFFICER, we want to reroute these too to use the
+		--  Club API so we can take advantage of it just like we do with
+		--  channels. GUILD and OFFICER are already using the Club API
+		--  internally at some point, and guilds have their own club ID
+		--  and streams.
 		if C_Club then -- 7.x compat
-			chunk_size = Me.guild_chunk_size
-			local club_id, stream_id = GetGuildStream( chat_type == "GUILD" and Enum.ClubStreamType.Guild or Enum.ClubStreamType.Officer )
+			local club_id, stream_id = 
+				GetGuildStream( chat_type == "GUILD" 
+									and Enum.ClubStreamType.Guild 
+									or Enum.ClubStreamType.Officer )
 			if not club_id then
+				-- The client right now doesn't actually print this message, so
+				--  we're helping it out a little bit. If it does start printing
+				--  it on its own, then remove this.
 				local info = ChatTypeInfo["SYSTEM"];
-				DEFAULT_CHAT_FRAME:AddMessage( ERR_GUILD_PLAYER_NOT_IN_GUILD, info.r, info.g, info.b, info.id );
+				DEFAULT_CHAT_FRAME:AddMessage( ERR_GUILD_PLAYER_NOT_IN_GUILD, 
+				                               info.r, info.g, info.b, 
+											   info.id );
+				-- They aren't in a guild though, so we cancel this message
+				--  from being queued.
 				return
 			end
-			arg3   = club_id
-			target = stream_id
-			chat_type = "CLUB"
+			chat_type  = "CLUB"
+			arg3       = club_id
+			target     = stream_id
+			chunk_size = Me.guild_chunk_size
 		end
 	elseif chat_type == "BNET" then
+		-- BNet messages also have an increased max-message-length. I
+		--  wonder when they might extend this limit in SendChatMessage.
 		chunk_size = Me.bnet_chunk_size
 	elseif chat_type == "CLUB" then
+		-- If we reach here, this message is from typing directly in the
+		--  communities panel.
 		chunk_size = Me.club_chunk_size
 	end
-	-- And we iterate over each, pass them to our main splitting function (the
-	--  one that cuts them to 255-character lengths), and then feed them off
+	-- And we iterate over each, pass them to our main splitting function 
+	--  (the one that cuts them to smaller chunks), and then feed them off
 	--  to our main chat queue system. That call might even bypass our queue
 	--  or the throttler, and directly send the message if the conditions
 	--  are right. But, otherwise this message has to wait its turn.
@@ -579,19 +661,7 @@ local CHAT_REPLACEMENT_PATTERNS = {
 --                                 -- enough.)
 function Me.SplitMessage( text, chunk_size )
 	chunk_size = chunk_size or Me.max_message_length
-	-- The Misspelled addon inserts color codes that are removed in its own
-	--  hooks to SendChatMessage. This isn't ideal, because it can set up its
-	--  hooks in the wrong "spot". In other words, its hooks might execute 
-	--  AFTER we've already cut up the message to proper sizes, meaning that 
-	--  it's going to make our slices even smaller, filled with a lot of empty
-	--  space.
-	-- An ideal fix is to get some Emote Splitter support in Misspelled, and
-	--  have them use one of our chat filters instead. Otherwise, we're stuck
-	--  with the less efficient version, calling RemoveHighlighting in here.
-	if Misspelled then -- This is poor because it's going to be called again
-		text = Misspelled:RemoveHighlighting( text ) -- by Misspelled
-	end                                         -- (and just waste time).
-
+	
 	-- For short messages we can not waste any time and return immediately
 	if text:len() <= chunk_size then -- if they can fit within a
 		return {text}                -- chunk already.
@@ -804,18 +874,18 @@ function Me.StopChatTimer()         -- And to cancel the timer, we just set the
 	end                             --
 end                                 --
                                     --								
-									
-local QUEUED_TYPES = {
-	SAY = true;
-	EMOTE = true;
-	CLUB = true;
-	BNET = true;
-	GUILD = true;
-	OFFICER = true;
-}
+-------------------------------------------------------------------------------
+local QUEUED_TYPES = {  -- These are the types that aren't passed directly to
+	SAY     = true;     --  the throttler for output. They're queued and sent
+	EMOTE   = true;     --  one at a time, so that we can verify if they went
+	CLUB    = true;     --  through or not.
+	BNET    = true;     -- We handle GUILD and OFFICER like this too since
+	GUILD   = true;     -- they're also treated like club channels in 8.0.
+	OFFICER = true;     -- Essentially, anything that can fail from throttle
+}                       --  or other issues should be put in here.
 
--- 7.x compat
-if not C_Club then
+-- [[7.x compat]] Remove this after 7.x; we don't handle GUILD/OFFICER like
+if not C_Club then             -- this.
 	QUEUED_TYPES.GUILD = nil;
 	QUEUED_TYPES.OFFICER = nil;
 end
@@ -826,12 +896,19 @@ end
 --  "BNET" and `channel` to the presenceID.
 -- Normal parameters:
 --  msg     = Message text
---  type    = Message type, e.g "SAY", "EMOTE", etc.
---  lang    = Language index.
---  channel = Channel or whisper target.
+--  type    = Message type, e.g "SAY", "EMOTE", "BNET", "CLUB", etc.
+--  arg3    = Language index or club ID.
+--  target  = Whisper target, presence ID, channel name, or stream ID.
 --
 function Me.QueueChat( msg, type, arg3, target )
 	type = type:upper()
+	
+	local msg_pack = {
+		msg    = msg;
+		type   = type;
+		arg3   = arg3;
+		target = target;
+	}
 	
 	-- Now we've got two paths here. One leads to the chat queue, the other
 	--  will directly send the messages that don't need to be queued.
@@ -862,22 +939,25 @@ function Me.QueueChat( msg, type, arg3, target )
 			return
 		end
 		
-		table.insert( Me.chat_queue, {     -- It looks like we're all good to
-			msg = msg, type = type,        --  queue this puppy and start up
-			arg3 = arg3, target = target --  the system.
-		})                                 --
-		Me.StartChat()                    --
+		-- It looks like we're all good to queue this puppy up and start the
+		table.insert( Me.chat_queue, msg_pack )  -- system.
+		Me.StartChat()
 		
 	else -- For other message types like party, raid, whispers, channels, we
 		 -- aren't going to be affected by the server throttler, so we go
-		Me.CommitChat( msg, type, arg3, target ) -- straight to putting these
-	end                                          -- messages out on the line.
+		Me.CommitChat( msg_pack )  -- straight to putting these
+	end                            --  messages out on the line.
 end   
 
+-------------------------------------------------------------------------------
+-- These are callbacks from the throttler (throttler.lua). They're only called
+--  when we're sending a lot of chat, and the throttler has delayed for a bit.
+--
 function Me.OnThrottlerStart()
 	Me.SendingText_ShowSending()
 end
 
+-- And this is after all messages are sent.
 function Me.OnThrottlerStop()
 	if not Me.chat_busy then
 		Me.SendingText_Hide()
@@ -934,7 +1014,7 @@ function Me.ChatQueue()
 	--  is sending a BNet message to an offline player. It's difficult to 
 	local c = Me.chat_queue[1]              -- intercept that sort of failure.
 	Me.SetChatTimer( Me.ChatDeath, CHAT_TIMEOUT ) 
-	Me.CommitChat( c.msg, c.type, c.arg3, c.target )
+	Me.CommitChat( c )
 end
 
 -------------------------------------------------------------------------------
@@ -964,6 +1044,7 @@ function Me.ChatConfirmed()
 	table.remove( Me.chat_queue, 1 ) --  queue and continue as normal.
 	Me.ChatQueue()
 end
+
 -------------------------------------------------------------------------------
 -- Upon failure, we wait a little while, and then retry sending the same
 function Me.ChatFailed( from_club )                         --  message.
@@ -1216,6 +1297,26 @@ function Me.OnChatMsgCommunitiesChannel( event, _,_,_,_,_,_,_,_,_,_,_,
 	elseif bn_sender_id and bn_sender_id ~= 0 and BNIsSelf(bn_sender_id) then
 		Me.ChatConfirmed()
 	end
+end
+
+-------------------------------------------------------------------------------
+-- Handle compatibility for the Misspelled addon.
+--
+function Me.MisspelledCompatibility()
+	if not Misspelled then return end -- (Not installed.)
+	
+	-- The Misspelled addon inserts color codes that are removed in its own
+	--  hooks to SendChatMessage. This isn't ideal, because it can set up its
+	--  hooks in the wrong "spot". In other words, its hooks might execute 
+	--  AFTER we've already cut up the message to proper sizes, meaning that 
+	--  it's going to make our slices even smaller, filled with a lot of empty
+	--  space.
+	-- What we do in here is unhook that code and then do it ourselves in one
+	Misspelled:Unhook( "SendChatMessage" )	      -- of our own chat filters. 
+	Me.AddChatFilter( function( text, chat_type, arg3, target )
+		text = Misspelled:RemoveHighlighting( text )
+		return text, chat_type, arg3, target
+	end)
 end
 
 -- See you on Moon Guard! :)
