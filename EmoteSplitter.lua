@@ -114,6 +114,7 @@ local FASTPOST_PERIOD  = 0.5    -- 500 milliseconds. If they post faster than
 -------------------------------------------------------------------------------
 -- Time to allow the chat queue to wait for a message to be confirmed before we
 local CHAT_TIMEOUT = 10.0 -- give up and show an error.
+local CHAT_THROTTLE_WAIT = 3.0
 -------------------------------------------------------------------------------
 -- We need to get a little bit creative when determining whether or not
 -- something is an organic call to the WoW API or if we're coming from our own
@@ -140,6 +141,7 @@ Me.fastpost_time = 0 -- At least FASTPOST_PERIOD seconds must pass before we
 Me.max_message_length = 255 -- have some extra room to work with, making the 
                             --  message longer and such. It's wasteful, but
                             --                                    it works.
+Me.club_chunk_size = 400
 -------------------------------------------------------------------------------
 -- We do some latency tracking ourselves, since the one provided by the game
 --  isn't very accurate at all when it comes to recent events. The one in the
@@ -248,15 +250,18 @@ function Me:OnEnable()
 	
 	-- And finally we hook the system chat events, so we can catch when the
 	--                         system tells us that a message failed to send.
-	Me:RegisterEvent( "CHAT_MSG_SYSTEM", "OnChatMsgSystem" )
+	Me:RegisterEvent( "CHAT_MSG_SYSTEM", Me.OnChatMsgSystem )
 	
 	-- Here's our main chat hooks for splitting messages.
 	-- Using AceHook, a "raw" hook is when you completely replace the original
 	--  function. Your callback fires when they try to call it, and it's up to
 	--  you to call the original function which is stored as 
 	--  `Me.hooks.FunctionName`. In other words, it's a pre-hook that can
-	Me:RawHook( "SendChatMessage", true ) -- modify or cancel the result.
-	Me:RawHook( "BNSendWhisper", true )   -- 
+	Me:RawHook( "SendChatMessage", Me.SendChatMessageHook, true ) -- modify or cancel the result.
+	Me:RawHook( "BNSendWhisper", Me.BNSendWhisperHook, true  )   -- 
+	if C_Club then
+		Me:RawHook( C_Club, "SendMessage", Me.ClubSendMessageHook, true )   -- 
+	end
 	-- And here's a normal hook. It's still a pre-hook, in that it's called
 	--  before the original function, but it can't cancel or modify the
 	Me:Hook( "ChatEdit_OnShow", true ) -- arguments.
@@ -266,18 +271,22 @@ function Me:OnEnable()
 	--  good measure - make sure that we are getting these unlocked. Some
 	--  strange addon might even copy these values before the frame is even
 	for i = 1, NUM_CHAT_WINDOWS do  -- shown... right?
-		_G["ChatFrame" .. i .. "EditBox"]:SetMaxLetters( 0 )
-		_G["ChatFrame" .. i .. "EditBox"]:SetMaxBytes( 0 )
+		local editbox = _G["ChatFrame" .. i .. "EditBox"]
+		editbox:SetMaxLetters( 0 )
+		editbox:SetMaxBytes( 0 )
+		if editbox.SetVisibleTextByteLimit then  -- For patch 8.0.
+			editbox:SetVisibleTextByteLimit( 0 ) --
+		end                                      --
 	end
 	
 	-- We hook our cat throttler too, which is currently LIBBW from XRP's 
 	--  author. This is so that messages that should be queued also go through
 	--  our system first, rather than be passed directly to the throttler by
-	Me.throttler_hook_sendchat = libbw.SendChatMessage -- other addons.
-	libbw.SendChatMessage      = Me.LIBBW_SendChatMessage
-	Me.throttler_hook_bnet     = libbw.BNSendWhisper
-	libbw.BNSendWhisper        = Me.LIBBW_BNSendWhisper
-	Me.throttle_lib            = libbw
+--	Me.throttler_hook_sendchat = libbw.SendChatMessage -- other addons.
+--	libbw.SendChatMessage      = Me.LIBBW_SendChatMessage
+--	Me.throttler_hook_bnet     = libbw.BNSendWhisper
+--	libbw.BNSendWhisper        = Me.LIBBW_BNSendWhisper
+--	Me.throttle_lib            = libbw
 	
 	-- Here's where we add the feature to hide the failure messages in the
 	-- chat frames, the failure messages that the system sends when your
@@ -330,7 +339,11 @@ end                           --  the undo/redo feature.
 function Me:ChatEdit_OnShow( editbox ) -- someone is about to type!
 	editbox:SetMaxLetters( 0 ); -- We're just removing the limit again here.
 	editbox:SetMaxBytes( 0 );   -- Extra prudency, in case some rogue addon, or
-end                             --  even the Blizzard UI, messes with it.
+	                            --  even the Blizzard UI, messes with it.
+	if editbox.SetVisibleTextByteLimit then  -- For patch 8.0.
+		editbox:SetVisibleTextByteLimit( 0 ) --
+	end										 --
+end 
 
 -------------------------------------------------------------------------------
 -- A simple function to iterate over a plain table, and return the key of any
@@ -415,7 +428,7 @@ end                          -- chat filters themselves and see how it works
                              -- out.
 -------------------------------------------------------------------------------
 -- This is our hook for LIBBW's SendChatMessage
---
+--[[
 function Me.LIBBW_SendChatMessage( libself, text, kind, lang, target, ... ) 
 	-- This is an organic call from outside, as we don't call this hooked
 	-- function directly. It's something else calling it.
@@ -424,7 +437,7 @@ function Me.LIBBW_SendChatMessage( libself, text, kind, lang, target, ... )
 	kind = kind:upper() -- types, which we want to pass to our queue instead of
 	if kind == "SAY" or kind == "EMOTE" -- letting them go through.
 	   or kind == "YELL" then
-		Me.SendChat( text, kind, lang )
+		Me.QueueChat( text, kind, lang )
 		return
 	end
 	
@@ -438,11 +451,11 @@ function Me.LIBBW_SendChatMessage( libself, text, kind, lang, target, ... )
 	--  is a call from the throttler lib rather than organic.
 	Me.throttler_hook_sendchat( libself, text, kind, lang, 
 	                            "#ES" .. (target or ""), ... )
-end
+end]]
 
 -------------------------------------------------------------------------------
 -- Here's our hook for LIBBW's BNSendWhisper
---
+--[[
 function Me.LIBBW_BNSendWhisper( libself, presenceID, text, ... )
 	-- Like above, we don't call this directly. It's an organic call that we
 	--  want to reroute to our chat queue. BNet whispers aren't affected by the
@@ -451,12 +464,12 @@ function Me.LIBBW_BNSendWhisper( libself, presenceID, text, ... )
 	--  all at once.
 	-- Basically, by having Emote Splitter installed, then any messages sent
 	--  by addons through Libbw's API are ensured to be in the right order when
-	Me.SendChat( text, "BNET", nil, presenceID ) -- received.
+	Me.QueueChat( text, "BNET", nil, presenceID ) -- received.
 	
 	-- In the future ChatThrottleLib might also have a BNet whisper function
 	--  (which in turn a lot of addons might use) which libbw should also take
 	--  control of.
-end
+end]]
 
 -------------------------------------------------------------------------------
 -- Function for splitting text on newlines or newline markers (literal "\n").
@@ -492,32 +505,24 @@ end
 -------------------------------------------------------------------------------
 -- Our hook for SendChatMessage in the WoW API. This is where the magic begins.
 --
-function Me:SendChatMessage( msg, chat_type, language, channel )
+function Me.SendChatMessageHook( msg, chat_type, language, channel )
 	
-	-- First of all, without a little bit of "special care" we don't really
-	--  know what's calling this. It could either be from the outside, an
-	--  organic call (from the chatbox, etc), or, from the chat throttler.
-	-- Ideally, we'd have a function in the chat throttler that we could call,
-	--  which would tell us that we're inside of the chat throttler. That's
-	--  just a huge headache though (to maintain), if we're to insert things 
-	--  in there. We want to keep our code and practices all in our own files. 
-	--  This way is a little more dirty, but it's also a lot more flexible when
-	--  it comes to playing nicely with the chat throttler lib.
-	-- How we do it? Simple. We just add a little code to the channel argument.
-	-- We prefix it with #ES to signal that this message is not organic, and
-	--  was handled by our system already.
-	if channel and tostring(channel):find( "#ES" ) then
-		-- So if we find that flag, clip it off, and then let this message fly.
-		Me.hooks.SendChatMessage( msg, chat_type, language, channel:sub(4) )
-		return
-	end
+	Me.ProcessIncomingChat( msg, chat_type, language, channel )
+end
+
+-------------------------------------------------------------------------------
+-- Our hook for BNSendWhisper in the WoW API.
+--
+function Me.BNSendWhisperHook( presence_id, message_text ) 
 	
-	-- Otherwise, this is actually an organic call, a new patient ready for
-	--  some rigorous surgery. We start with a little bit of housekeeping here.
-	chat_type = chat_type:upper() -- We check the chat_type often, so may as
-	                          --  well make it a fixed term before we continue.
-	-- Here's where we run our chat filters. See AddChatFilter for a more
-	--  rigorous discussion on them.
+	Me.ProcessIncomingChat( message_text, "BNET", nil, presence_id )
+end
+
+function Me.ClubSendMessageHook( club_id, stream_id, message )
+	Me.ProcessIncomingChat( message, "CLUB", club_id, stream_id, Me.club_chunk_size )
+end
+
+function Me.ProcessIncomingChat( msg, chat_type, arg3, target, chunk_size )
 	for _, filter in ipairs( Me.chat_filters ) do
 		local a, b, c, d = filter( msg, chat_type, language, channel )
 		
@@ -533,7 +538,6 @@ function Me:SendChatMessage( msg, chat_type, language, channel )
 		-- If the filter returned nil, then we don't do anything to the
 		--  message.
 	end
-	
 	-- Now we cut this message up into potentially several pieces. First we're
 	--  passing it through this line splitting function, which gives us a table
 	msg = Me.SplitLines( msg )  -- of lines, or just { msg } if there aren't
@@ -542,56 +546,11 @@ function Me:SendChatMessage( msg, chat_type, language, channel )
 	--  one that cuts them to 255-character lengths), and then feed them off
 	--  to our main chat queue system. That call might even bypass our queue
 	--  or the throttler, and directly send the message if the conditions
-	for _, line in ipairs( msg ) do             -- are right. But, otherwise
-		local chunks = Me.SplitMessage( line )   -- this message has to wait
-		for i = 1, #chunks do                     -- its turn.
-			Me.SendChat( chunks[i], chat_type, language, channel )
-		end
-	end
-end
-
--------------------------------------------------------------------------------
--- Our hook for BNSendWhisper in the WoW API.
---
-function Me:BNSendWhisper( presenceID, messageText ) 
-	
-	-- In SendChatMessage, we have the channel parameter that we can abuse to
-	-- signal that we're not in an organic call. For BNet messages, we flag
-	if presenceID >= BNET_FLAG_OFFSET then -- this by adding BNET_FLAG_OFFSET
-		                                  -- to the presence ID.
-		-- So here we know that this message is ready to be put out on the
-		-- line.             Just don't forget to clean up our flag here.
-		Me.hooks.BNSendWhisper( presenceID - BNET_FLAG_OFFSET, messageText )
-		return
-	end
-	
-	-- We run our chat filters on Bnet whispers too, despite them using a bit
-	--  of a different API. This isn't so DRY, in that it's mostly a hacked up
-	--  copy of the code for SendChatMessage, but it's not too bad.
-	for _, filter in ipairs( Me.chat_filters ) do
-		local a, b, c, d = filter( messageText, "BNET", nil, presenceID )
-		
-		if a == false then -- Mostly the same operation in here like we did
-			return         --  in the normal chat version. Just we rearrange
-		elseif a then      --  or ignore some arguments a bit.
-			messageText, _, _, presenceID = a, b, c, d
-		end
-	end
-	
-	-- Most of this code layout is quite identical to the flow in the
-	--  SendChatMessage function. Some might argue that things should be more
-	--  DRY, and this is bad practice, but I say that the plus side to doing
-	--  things a little WET (Write Everything Twice/Waste Everyone's Time)
-	--  means that it's easier to be more flexible, should there be a need
-	--  for it. I guess another reason for WET code is efficiency. More
-	--  customized handlers rather than one handler that's slower which
-	--  has a lot more ifs and thens.
-	-- We have a special custom chat type "BNET" which our system handles to
-	messageText = Me.SplitLines( messageText )   -- pass this message to the
-	for _, line in ipairs( messageText ) do       -- BNet side of message
-		local chunks = Me.SplitMessage( line )    --  things.
-		for i = 1, #chunks do
-			Me.SendChat( chunks[i], "BNET", nil, presenceID )
+	--  are right. But, otherwise this message has to wait its turn.
+	for _, line in ipairs( msg ) do
+		local chunks = Me.SplitMessage( line, chunk_size )
+		for i = 1, #chunks do                     
+			Me.QueueChat( chunks[i], chat_type, arg3, target )
 		end
 	end
 end
@@ -624,7 +583,8 @@ local CHAT_REPLACEMENT_PATTERNS = {
 -- Here's our main message splitting function. You pass in text, and it spits
 --  out a table of smaller message (or the whole message, if it's small
 --                                 -- enough.)
-function Me.SplitMessage( text )   --
+function Me.SplitMessage( text, chunk_size )
+	chunk_size = chunk_size or Me.max_message_length
 	-- The Misspelled addon inserts color codes that are removed in its own
 	--  hooks to SendChatMessage. This isn't ideal, because it can set up its
 	--  hooks in the wrong "spot". In other words, its hooks might execute 
@@ -639,9 +599,9 @@ function Me.SplitMessage( text )   --
 	end                                         -- (and just waste time).
 
 	-- For short messages we can not waste any time and return immediately
-	if text:len() <= Me.max_message_length then -- if they can fit within a
-		return {text}                          --   chunk already.
-	end	                                      -- A nice shortcut.
+	if text:len() <= chunk_size then -- if they can fit within a
+		return {text}                -- chunk already.
+	end	                             -- A nice shortcut.
 	
 	
 	-- Otherwise, we gotta get our hands dirty. We want to preserve links (or
@@ -679,7 +639,7 @@ function Me.SplitMessage( text )   --
 	
 	local chunks = {} -- Our collection of text chunks. The return value. We'll
 	                  --  fill it with each section that we cut up.
-	while( text:len() > Me.max_message_length ) do
+	while( text:len() > chunk_size ) do
 		-- While in this loop, we're dealing with `text` that is too big to fit
 		--  in a single chunk (max 255 characters or whatever the override is
 		--  set to [we'll use the 255 figure everywhere to keep things
@@ -689,7 +649,7 @@ function Me.SplitMessage( text )   --
 		--  whitespace, or cutting right before it.
 		-- We scan backwards for whitespace or an otherwise suitable place to
 		--  break the message.
-		for i = Me.max_message_length+1 - postmark:len(), 1, -1 do
+		for i = chunk_size+1 - postmark:len(), 1, -1 do
 			--                          ^^^^^^^^^^^^^^^^
 			-- Don't forget to leave some extra room for the postmark.
 			local ch = string.byte( text, i )
@@ -723,7 +683,7 @@ function Me.SplitMessage( text )   --
 				-- (I don't know how Japanese works.)
 				--
 				-- We're starting over this train.
-				for i = Me.max_message_length+1 - postmark:len(), 1, -1 do
+				for i = chunk_size+1 - postmark:len(), 1, -1 do
 					local ch = text:byte(i)
 					
 					-- Now we're searching for any normal ASCII character, or
@@ -890,7 +850,7 @@ end                                 --
 --  lang    = Language index.
 --  channel = Channel or whisper target.
 --
-function Me.SendChat( msg, type, lang, channel )
+function Me.QueueChat( msg, type, lang, channel )
 	type = type:upper()
 	
 	-- Now we've got two paths here. One leads to the chat queue, the other
@@ -932,78 +892,15 @@ function Me.SendChat( msg, type, lang, channel )
 		 -- aren't going to be affected by the server throttler, so we go
 		Me.CommitChat( msg, type, lang, channel ) -- straight to putting these
 	end                                          -- messages out on the line.
-end                                           
+end   
 
--------------------------------------------------------------------------------
--- This is our function to finally send message out on the line directly.
--- Same parameters as SendChatMessage, with the exception of the special
---  `kind` "BNET" which represents a BNet whisper, where channel is the
---  presenceID. Some people say that you shouldn't repeat yourself in
---  documentation, but really, if someone jumps to one part, they don't have
---  to jump to another part to read more (unless they want to learn even MORE.)
---
-function Me.CommitChat( msg, kind, lang, channel )
+function Me.OnThrottlerStart()
+	Me.SendingText_ShowSending()
+end
 
-	-- This is our message counter. Keeps track of how many messages are
-	--  waiting to be sent in the throttler.
-	Me.messages_waiting = Me.messages_waiting + 1
-	
-	-- For public chat messages, we also want to record the latency so we can
-	-- use it later if something goes wrong.
-	local record_latency = false
-	if kind == "SAY" or kind == "EMOTE" or kind == "YELL" then
-		record_latency = true
-	end
-	
-	-- Basically, that allows us to see when the throttler isn't busy. It's
-	--  important for our "fast post" feature. If that's enabled, then we can
-	--  bypass the chat system every so often--defined as 500 milliseconds
-	if Me.db.global.fastpost and Me.messages_waiting == 1 -- as of writing.
-	   and GetTime() - Me.fastpost_time > FASTPOST_PERIOD then 
-		-- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-		-- Personally, I love this pattern of checking if time is past a
-		--  certain record, and then resetting it with the time, to make
-		--                              these sorts of checks.
-		Me.fastpost_time = GetTime()
-		
-		-- We're only in here if message_waiting == 1, so we're removing that
-		Me.messages_waiting = 0 -- and then sending our message directly to
-		                          -- the chat API.
-		if kind == "BNET" then
-			Me.hooks.BNSendWhisper( channel, msg ) -- Kind of weird that they
-		else                      -- have `presenceID` before `msg`, isn't it?
-			Me.hooks.SendChatMessage( msg, kind, lang, channel )
-		end
-		
-		if record_latency then
-			Me.StartLatencyRecording()
-		end
-	else
-		-- If we didn't meet the "fastpost" criteria, then we're going to
-		--  pass this message to the chat throttler lib we're using (libbw).
-		if kind == "BNET" then
-			-- For BNET messages, we add a certain constant to the presenceID
-			--  to have a signal for our code that this message is coming from
-			--  the channeler, and not organic, so we don't process it a second
-			--  time.
-			Me.throttler_hook_bnet( Me.throttle_lib, 
-			                        channel + BNET_FLAG_OFFSET, 
-									msg, "ALERT", nil, OnCTL_Sent )
-		else
-			-- For other messages, we prefix the channel with "#ES" to signal
-			--                                                like above.
-			Me.throttler_hook_sendchat( Me.throttle_lib, msg, 
-			                            kind, lang, "#ES" .. (channel or ""), 
-										"ALERT", nil, OnCTL_Sent, 
-										record_latency )
-		end
-		
-		-- The chat throttle lib can call OnCTL_Sent inside of the above
-		--  functions if there is enough bandwidth to send the messages
-		--  immediately. This is very common, so it's often that
-		if Me.messages_waiting > 0 then  -- messages_waiting will be 0 here.
-			Me.SendingText_ShowSending()
-		end 
+function Me.OnThrottlerStop()
+	if not Me.chat_busy then
+		Me.SendingText_Hide()
 	end
 end
 
@@ -1093,11 +990,13 @@ function Me.ChatFailed()                                  --  message.
 	--  throttle error as a pure warning, and the chat message will still go
 	--  through. There can be a large gap between the chat event and that
 	--  though, so we need to wait to see if we get the chat message still.
-	-- The amount of time we wait is at least 3 seconds, or more if they have
-	--  high latency, a maximum of ten seconds. This might be a bother to 
-	--  people who get a lag spike though, so maybe we should limit this to
-	--  be less? They DID get the chat throttled message after all.
-	local wait_time = math.min( 10, math.max( 1.5 + Me.GetLatency(), 3 ))
+	-- The amount of time we wait is at least CHAT_THROTTLE_WAIT (3) seconds, 
+	--  or more if they have high latency, a maximum of ten seconds. This might 
+	--  be a bother to  people who get a lag spike though, so maybe we should 
+	--  limit this to be less? They DID get the chat throttled message after
+	--  all.
+	local wait_time = 
+		math.min( 10, math.max( 1.5 + Me.GetLatency(), CHAT_THROTTLE_WAIT ))
 	Me.SetChatTimer( Me.ChatFailedRetry, wait_time )
 	Me.SendingText_ShowFailed()  -- We also update our little indicator to show
 end                              --  this.
@@ -1145,8 +1044,8 @@ end
 
 -------------------------------------------------------------------------------
 -- We measure the time from when a message is sent, to the time we receive
---                                      a server event that corresponds to
-function Me.StartLatencyRecording()  -- that message.
+--                                   -- a server event that corresponds to
+function Me.StartLatencyRecording()  --  that message.
 	Me.latency_recording = GetTime()
 end
 
@@ -1204,7 +1103,7 @@ end
 -------------------------------------------------------------------------------
 -- Our handle for the CHAT_MSG_SYSTEM event.
 --
-function Me:OnChatMsgSystem( event, message, sender, _, _, target )
+function Me.OnChatMsgSystem( event, message, sender, _, _, target )
 	-- We're just looking out in here for throttle errors.
 	if #Me.chat_queue == 0 then -- If the queue isn't started, then we aren't
 		-- expecting anything.

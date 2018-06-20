@@ -1,7 +1,13 @@
 ## 1.3.5
-Localization support.
+Patch 8.0 support with communities chat.
 
-Cleanup. :)
+Improvements to handle severe latency.
+
+More responsive chat handling.
+
+Localization support (for the options menu). Please help translate this addon if you can. See the translations page on the CurseForge project!
+
+And... code commentary! I got carried away. :)
 
 
 ## 1.3.4
