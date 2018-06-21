@@ -204,7 +204,6 @@ end
 -- Here's the real initialization code. This is called after all addons are 
 --                                     -- initialized, and so is the game.
 function Me:OnEnable()
-	PLAYER_GUID = UnitGUID( "player" )
 	-- We definitely cannot work if UnlimitedChatMessage is enabled at the
 	--  same time. If we see that it's loaded, then we cancel our operation
 	if UCM then -- in favor of it. Just print a notice instead. Better than 
@@ -217,6 +216,9 @@ function Me:OnEnable()
 		--  but I think this is a bit more of a nice approach...
 		return
 	end
+	
+	PLAYER_GUID = UnitGUID( "player" ) -- Just in case...
+	
 	-- Some miscellaneous things here.
 	-- See options.lua. This is initializing our configuration database, so 
 	Me.Options_Init() -- it's needed before we can access Me.db.etc.
@@ -293,6 +295,9 @@ function Me:OnEnable()
 		end
 	end
 	
+	-- Our community chat hack entry.
+	Me.UnlockCommunitiesChat()
+	
 	-- We hook our cat throttler too, which is currently LIBBW from XRP's 
 	--  author. This is so that messages that should be queued also go through
 	--  our system first, rather than be passed directly to the throttler by
@@ -328,28 +333,18 @@ function Me:OnEnable()
 	f:SetSize( 200, 20 )          -- 200x20 pixels dimensions. Doesn't really 
 	                              --  matter as the text just sits on top.
 	f:EnableMouse( false )        -- Click-through.
-	-- This might be considered a bit primitive or dirty. Usually all of this
-	--  stuff is defined in an XML file, and things like fonts and sizes are
-	--  inherited from some of the standard font classes in play. But ...
-	--  this is a lot easier and simpler to setup, this way. I think it'd
-	--  still be better to fix up some of this to be more friendly with the
-	--  game, and inherit its fonts templates. (TODO!)
-	f.text = f:CreateFontString( nil, "OVERLAY" ) -- Unnamed, overlay layer.
-	f.text:SetPoint( "BOTTOMLEFT" ) -- Bottom-left of the frame, which is
-	                                -- 3 pixels from the edge of the screen.
-	f.text:SetJustifyH( "LEFT" )    -- Align text with the left side.
-	f.text:SetFont( "Fonts\\ARIALN.TTF", 10, "OUTLINE" ) 
-	                                -- 10pt Outlined Arial Narrow
-	f.text:SetText( L["Sending..."] ) -- Default text; this is overridden.
-	f:Hide()                        -- Start hidden.
-	f:SetFrameStrata( "DIALOG" )    -- DIALOG is a high strata that appears
-	Me.sending_text = f             --  over most other normal things.
+	
+	-- This is set up in indicator.xml.
+	Me.sending_text = EmoteSplitterSending
 	
 	-- Initialize other modules here.
 	Me.EmoteProtection.Init()
 	
+	---------------------------------------------------------------------------
 	-- And now our compatibility code.
+	---------------------------------------------------------------------------
 	Me.MisspelledCompatibility()
+	Me.TonguesCompatibility()
 end
 
 -------------------------------------------------------------------------------
@@ -481,12 +476,10 @@ end
 -- main ProcessIncomingChat function.
 --
 function Me.SendChatMessageHook( msg, chat_type, language, channel )
-
 	Me.ProcessIncomingChat( msg, chat_type, language, channel )
 end
 
 function Me.BNSendWhisperHook( presence_id, message_text ) 
-	
 	Me.ProcessIncomingChat( message_text, "BNET", nil, presence_id )
 end
 
@@ -527,16 +520,57 @@ local function GetGuildStream( type )
 end
 
 -------------------------------------------------------------------------------
+-- Okay, now for WHATEVER reason, a filter function can dispatch new chat
+--  messages entirely. Presumably, they're discarding the original.
+--
+-- Typical use is returning `false` from their filter function, after calling
+--  this multiple times to split the chat message into multiple ones. They
+--  can keep the original too if they want, and use this to send metadata or
+--  something.
+--
+-- Chat messages that are spawned using this do not go through your message
+--  filter twice. When they're processed, the filter list resumes right after
+--  where yours was.
+--
+-- Look, just use your imagination. This is literally for our broken af 
+--  Tongues compatibility layer.
+--
+-- filter: The filter function that is calling this.
+-- msg, chat_type, arg3, target: The new chat message.
+--
+function Me.SendChatFromFilter( filter, msg, chat_type, arg3, target )
+	local filter_index
+	for k,v in pairs( Me.chat_filters ) do
+		if v == filter then
+			filter_index = k
+			break
+		end
+	end
+	
+	if not filter_index then
+		error( "Filter isn't registered." )
+		return
+	end
+	
+	Me.ProcessIncomingChat( msg, chat_type, arg3, target, filter_index + 1 )
+end
+
+-------------------------------------------------------------------------------
 -- This is where the magic happens...
 --
 -- Our parameters don't only accept the ones from SendChatMessage.
 -- We also add the chat type "BNET" where target is the presence ID, and "CLUB"
 --  where arg3 is the club ID, and target is the stream ID.
 --
-function Me.ProcessIncomingChat( msg, chat_type, arg3, target )
+-- `filter_start` is for SendChatFromFilter where the filter function is
+--  spawning new chat messages.
+--
+function Me.ProcessIncomingChat( msg, chat_type, arg3, target, filter_start )
+	filter_start = filter_start or 1
 	msg = tostring(msg or "")
-	for _, filter in ipairs( Me.chat_filters ) do
-		local a, b, c, d = filter( msg, chat_type, language, channel )
+	for filter_index = filter_start, #Me.chat_filters do
+		local filter = Me.chat_filters[filter_index]
+		local a, b, c, d = filter( msg, chat_type, language, target )
 		
 		-- If a chat filter returns `false` then we cancel this message. 
 		if a == false then  --
@@ -544,7 +578,7 @@ function Me.ProcessIncomingChat( msg, chat_type, arg3, target )
 		elseif a then       --
 			-- Otherwise, if it's non-nil, we assume that they're changing
 			--  the arguments on their end, so we replace them with the
-			msg, chat_type, language, channel = a, b, c, d -- return values.
+			msg, chat_type, language, target = a, b, c, d -- return values.
 		end
 		
 		-- If the filter returned nil, then we don't do anything to the
@@ -554,6 +588,7 @@ function Me.ProcessIncomingChat( msg, chat_type, arg3, target )
 	--  passing it through this line splitting function, which gives us a table
 	msg = Me.SplitLines( msg )  -- of lines, or just { msg } if there aren't
 	                              --  any newlines.
+	chat_type = chat_type:upper()
 	
 	-- We do some work here in rerouting some messages to avoid using
 	--  SendChatMessage, specifically with ones that use the Club API. It's
@@ -1300,6 +1335,33 @@ function Me.OnChatMsgCommunitiesChannel( event, _,_,_,_,_,_,_,_,_,_,_,
 end
 
 -------------------------------------------------------------------------------
+-- Unlock the community chatbox.
+--
+function Me.UnlockCommunitiesChat()
+	if not C_Club then return end -- 7.x compat
+	
+	if not CommunitiesFrame then
+		-- The communities Blizzard addon isn't loaded yet. We'll wait until
+		--  it is.
+		
+		Me:RegisterEvent( "ADDON_LOADED", function( event, addon )
+			if addon == "Blizzard_Communities" then
+				Me:UnregisterEvent( "ADDON_LOADED" )
+				Me.UnlockCommunitiesChat()
+				-- Anonymous functions like this are pretty handy, huh?
+			end
+		end)
+		return
+	end
+	CommunitiesFrame.ChatEditBox:SetMaxBytes( 0 )
+	CommunitiesFrame.ChatEditBox:SetMaxLetters( 0 )
+	if CommunitiesFrame.ChatEditBox.SetVisibleTextByteLimit then
+		-- remove this check when we're sure this is going to exist.
+		CommunitiesFrame.ChatEditBox:SetVisibleTextByteLimit( 0 )
+	end
+end
+
+-------------------------------------------------------------------------------
 -- Handle compatibility for the Misspelled addon.
 --
 function Me.MisspelledCompatibility()
@@ -1317,6 +1379,78 @@ function Me.MisspelledCompatibility()
 		text = Misspelled:RemoveHighlighting( text )
 		return text, chat_type, arg3, target
 	end)
+end
+
+-------------------------------------------------------------------------------
+-- Please read the following comments in your most maniacal voice, complete
+--  with evil cackles. I almost gave up several times on this, and it's not
+--  /really/ compatible, as I doubt Tongues' protocol even supports split
+--  messages.
+--
+function Me.TonguesCompatibility()
+	if not Tongues then return end -- No Tongues.
+	
+	-- First... we want to kill Tongues' SendChatMessage hook. All it does is 
+	--  pass execution to HandleSend. We'll unhook their SendChatMessage hook
+	--  by turning HandleSend into a dummy function, and then hook HandleSend
+	--  ourselves...
+	local stolen_handle_send = Tongues.HandleSend
+	local tongues_hook = Tongues.Hooks.Send
+	Tongues.HandleSend = function( self, msg, type, langid, lang, channel )
+		tongues_hook( msg, type, langid, channel )
+	end
+	
+	-- We reset their saved function for their hook with something that
+	--  lets us know that they want to make a call to it. Why is this even
+	--  necessary...? Don't question it!
+	local tongues_is_calling_send = false
+	local outside_send_function = function( ... )
+		tongues_is_calling_send = true
+		-- We use pcall to ignore errors, so tongues_is_calling_send doesn't
+		--  get stuck, and it's likely that we'll run into a handful of errors
+		--  if we have Tongues loaded.
+		local a,b,c,d = ...
+		pcall( function()
+			SendChatMessage( a,b,c,d ) 
+		end)
+		tongues_is_calling_send = false
+	end
+	
+	Tongues.Hooks.Send = outside_send_function
+	
+	-- Now... inside of our chat filter, we know if we're doing an organic call
+	--  or not... If it is, we replace this hook temporarily to use our most
+	--  special function SendChatFromFilter...
+	local filter_function
+	local inside_send_function = function( ... )
+		Me.SendChatFromFilter( filter_function, ... )
+	end
+	
+	filter_function = function( msg, type, _, target )
+		if tongues_is_calling_send then 
+			-- If Tongues is calling this, then we just skip our filter.
+			return
+		end
+		
+		-- And then replace the hook and call their handle send.
+		Tongues.Hooks.Send = inside_send_function
+		
+		local langID, lang = GetSpeaking() -- Tongues adds this global.
+		
+		-- We need to use pcall, otherwise our Hooks.Send is going to be
+		--  botched if we break out of here from an error.
+		pcall( function() 
+			stolen_handle_send( Tongues, msg, type, langID, lang, target )
+		end)
+		
+		-- And then put it back...
+		Tongues.Hooks.Send = outside_send_function
+		
+		-- :)
+		return false
+	end
+	
+	Me.AddChatFilter( filter_function )
 end
 
 -- See you on Moon Guard! :)

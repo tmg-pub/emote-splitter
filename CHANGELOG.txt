@@ -7,6 +7,10 @@ More responsive chat handling.
 
 Localization support (for the options menu). Please help translate this addon if you can. See the translations page on the CurseForge project!
 
+Better Misspelled compatibility
+
+Tongues compatibility. This is MINIMAL support, and I doubt the majority of Tongues' features will even work with multi-message emotes. This should work for your simple dialects and "affects" though.
+
 And... code commentary! I got carried away. :)
 
 

@@ -1,0 +1,47 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.blizzard.com/wow/ui/ ..\..\FrameXML\UI.xsd">
+  <!-- This is to set up the little "Sending..." indicator in the bottom left 
+        corner of the screen. It's a bit easier to do little things like this
+        right in the Lua source, but this would be technically the more
+        proper way. Maybe the graphic designers have an easier time working
+        with templates like this rather than dealing with programming code. -->
+	<Font name="EmoteSplitterSendingFont" font="Fonts\ARIALN.TTF" height="10" 
+        virtual="true" outline="NORMAL">
+		<Color r="1.0" g="1.0" b="1.0"/>
+	</Font>
+  
+  <!-- While we could just make a font string right on the UIParent, having our
+        own frame for it might be considered a little less funky. Plus, I don't
+        think you can do it that way in Lua. A common mistake is to not anchor
+        things to the UI Parent; not doing that causes two major problems that
+        aren't easily noticable at first (but very obvious once you
+        understand). One, the frame isn't scaled right. The UI Parent will
+        scale coordinates (by default) to equal your screen resolution. Your 
+        frames will typically appear bigger. Two, your frame won't be hidden
+        when you press Alt-Z. Only things that are children of the UI Parent
+        are. -->
+  <Frame name="EmoteSplitterSending" enableMouse="false" visible="false" 
+         frameStata="DIALOG" parent="UIParent">
+         
+    <!-- We don't really need size but I feel good putting this here 
+         anyway. -->
+    <Size x="200" y="20"/>
+    <Anchors>
+      <Anchor point="BOTTOMLEFT" x="3" y="3"/>
+    </Anchors>
+    <Layers>
+      <Layer level="ARTWORK">
+        <FontString parentKey="text" justifyH="LEFT" 
+                    font="EmoteSplitterSendingFont">
+          <Anchors>
+            <!-- Font strings don't need a size set to work right. They are
+                  handled in a special way when it comes to anchoring and
+                  sizing. If you just set one point like this, then the
+                  width will be infinite, and expand outward from this point.
+                  -->
+            <Anchor point="BOTTOMLEFT"/>
+          </Anchors>
+        </FontString>
+      </Layer>
+    </Layers>
+  </Frame>
+</Ui>
