@@ -439,6 +439,45 @@ function Me.GetChatFilters() -- write something that 'previews' outgoing
 	return Me.chat_filters   -- messages, and would use this to apply the    
 end                          -- chat filters themselves and see how it works 
                              -- out.
+-------------------------------------------------------------------------------
+-- Okay, now for WHATEVER reason, a filter function can dispatch new chat
+--  messages entirely. Presumably, they're discarding the original.
+--
+-- Typical use is returning `false` from their filter function, after calling
+--  this multiple times to split the chat message into multiple ones. They
+--  can keep the original too if they want, and use this to send metadata or
+--  something.
+--
+-- Chat messages that are spawned using this do not go through your message
+--  filter twice. When they're processed, the filter list resumes right after
+--  where yours was.
+--
+-- Look, just use your imagination. This is literally for our broken af 
+--  Tongues compatibility layer.
+--
+-- filter: The filter function that is calling this. This may be nil, which
+--         means that the new message will go through the entire filter chain
+--         (including yours) again.
+-- msg, chat_type, arg3, target: The new chat message.
+--
+function Me.SendChatFromFilter( filter, msg, chat_type, arg3, target )
+	local filter_index = 0
+	if filter then
+		for k,v in pairs( Me.chat_filters ) do
+			if v == filter then
+				filter_index = k
+				break
+			end
+		end
+		
+		if not filter_index then
+			error( "Filter isn't registered." )
+			return
+		end
+	end
+	
+	Me.ProcessIncomingChat( msg, chat_type, arg3, target, filter_index + 1 )
+end
 
 -------------------------------------------------------------------------------
 -- Function for splitting text on newlines or newline markers (literal "\n").
@@ -517,42 +556,6 @@ local function GetGuildStream( type )
 			end
 		end
 	end
-end
-
--------------------------------------------------------------------------------
--- Okay, now for WHATEVER reason, a filter function can dispatch new chat
---  messages entirely. Presumably, they're discarding the original.
---
--- Typical use is returning `false` from their filter function, after calling
---  this multiple times to split the chat message into multiple ones. They
---  can keep the original too if they want, and use this to send metadata or
---  something.
---
--- Chat messages that are spawned using this do not go through your message
---  filter twice. When they're processed, the filter list resumes right after
---  where yours was.
---
--- Look, just use your imagination. This is literally for our broken af 
---  Tongues compatibility layer.
---
--- filter: The filter function that is calling this.
--- msg, chat_type, arg3, target: The new chat message.
---
-function Me.SendChatFromFilter( filter, msg, chat_type, arg3, target )
-	local filter_index
-	for k,v in pairs( Me.chat_filters ) do
-		if v == filter then
-			filter_index = k
-			break
-		end
-	end
-	
-	if not filter_index then
-		error( "Filter isn't registered." )
-		return
-	end
-	
-	Me.ProcessIncomingChat( msg, chat_type, arg3, target, filter_index + 1 )
 end
 
 -------------------------------------------------------------------------------
@@ -1341,9 +1344,8 @@ function Me.UnlockCommunitiesChat()
 	if not C_Club then return end -- 7.x compat
 	
 	if not CommunitiesFrame then
-		-- The communities Blizzard addon isn't loaded yet. We'll wait until
+		-- The Blizzard Communities addon isn't loaded yet. We'll wait until
 		--  it is.
-		
 		Me:RegisterEvent( "ADDON_LOADED", function( event, addon )
 			if addon == "Blizzard_Communities" then
 				Me:UnregisterEvent( "ADDON_LOADED" )
