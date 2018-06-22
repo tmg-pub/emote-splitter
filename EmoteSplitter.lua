@@ -82,12 +82,17 @@ Me.chat_queue = {} -- This is a FIFO, first-in-first-out,
 Me.chat_busy   = false -- messages being sent. This isn't used for messages
                        --  not queued (party/raid/whisper etc).
 -------------------------------------------------------------------------------
--- Our list of chat filters. This is a collection of functions that can be
---  added by other third parties to process messages before they're sent.
--- It's much cleaner or safer to do that with these rather than them hooking
---  SendChatMessage (or other functions) themselves, since it will be undefined
-Me.chat_filters = {} -- if their hook fires before or after the message is
-                     --  cut up by our functions.
+-- This is a collection of functions that can be added by other third parties 
+--  to process messages before they're sent. It's much cleaner or safer to do 
+--  that with these rather than them hooking SendChatMessage directly, since 
+--  it will be undefined if their hook fires before or after the message is
+Me.chat_hooks = {    -- cut up by our functions. We have a few hook points
+	START = {};      --  here. One before everything. One before it's queued
+	QUEUE = {};      --  and one more post-queue. You can't modify or stop
+	POSTQUEUE = {};  --  messages in the QUEUE/POSTQUEUE hooks.
+}
+Me.hook_stack = {} -- Our stack for hooks in case we're nesting things with
+                   --  SendChatFromHook.
 -------------------------------------------------------------------------------
 -- We count failures when we get a chat error. Some of the errors we get
 --  (particularly from the communities API) are vague, and we don't really
@@ -260,6 +265,11 @@ function Me:OnEnable()
 		Me.TryConfirm( "BNET", PLAYER_GUID )
 	end)
 	
+	-- This bug hasn't been fixed for a while. I didn't even know they had a
+	--  dedicated message for this.
+	Me:RegisterEvent( "CHAT_MSG_BN_WHISPER_PLAYER_OFFLINE", 
+	                  Me.OnChatMsgBnOffline )
+	
 	-- And finally we hook the system chat events, so we can catch when the
 	--                         system tells us that a message failed to send.
 	Me:RegisterEvent( "CHAT_MSG_SYSTEM", Me.OnChatMsgSystem )
@@ -297,15 +307,6 @@ function Me:OnEnable()
 	
 	-- Our community chat hack entry.
 	Me.UnlockCommunitiesChat()
-	
-	-- We hook our cat throttler too, which is currently LIBBW from XRP's 
-	--  author. This is so that messages that should be queued also go through
-	--  our system first, rather than be passed directly to the throttler by
---	Me.throttler_hook_sendchat = libbw.SendChatMessage -- other addons.
---	libbw.SendChatMessage      = Me.LIBBW_SendChatMessage
---	Me.throttler_hook_bnet     = libbw.BNSendWhisper
---	libbw.BNSendWhisper        = Me.LIBBW_BNSendWhisper
---	Me.throttle_lib            = libbw
 	
 	-- Here's where we add the feature to hide the failure messages in the
 	-- chat frames, the failure messages that the system sends when your
@@ -368,10 +369,9 @@ local function FindTableValue( table, value ) -- first value that matches the
 end
 
 -------------------------------------------------------------------------------
--- Emote Splitter supports chat filters which are used during organic calls to
---  SendChatMessage. They're used to process text that's send by the user 
---  before it gets passed to the main system--which cuts it up (if it's that 
---  big) and actually sends it.
+-- Emote Splitter supports chat hooks which are used during calls to
+--  SendChatMessage. They're used to monitor or adjust text that's sent by the
+--  user at different points throughout our system.
 -- 
 -- The reason for this is to avoid any more hooking of the SendChatMessage
 --  function itself. Normally an addon would hook SendChatMessage if they want
@@ -380,11 +380,9 @@ end
 --  get your hook called before OR after the text is split up into smaller
 --  sections. A clear problem with this, is that if you want to insert text,
 --  and the emote is already cut up, then you're going to push text past the
---  255-character limit and some is going to get cut off. This is a problem
---  with Tongues, but we have the workaround with the /emotesplitter maxlen
---  command.
+--  255-character limit and some is going to get cut off.
 -- 
--- The signature for the callback function (filter_function) is:
+-- The signature for the callback function (func) is:
 --
 --   function( text, chat_type, arg3, target )
 --
@@ -392,39 +390,56 @@ end
 --  passed to SendChatMessage.
 --
 --   text:      The message text.
---   chat_type: "SAY", "EMOTE" etc, may also be "BNET" for BNet whispers.
+--   chat_type: "SAY", "EMOTE" etc, also includes our custom 
+--               types "BNET", "CLUB".
 --   arg3:      Language ID (a number), or club ID
 --   target:    Depending on chat_type this is either a channel name, a
 --               whisper target, a presence ID, or a community stream ID.
 --
---   Return false from this function to block the message from being send--to
---    discard it. Return nothing (nil) to have the filter do nothing, and let
---    the message pass through.
+--   Return false from this function to block the message from being sent--to
+--    discard it. Return nil to do nothing, and let the message pass through.
 --   Otherwise, `return text, chat_type, arg3, target` to modify the chat
 --    message. Take extra care to make sure that you're only setting these to
 --    valid values.
 --
+-- `point` is where you will hook the system. This can be:
+-- "START" - Hook at the start, the message is raw and hasn't been cut up yet.
+-- "QUEUE" - Called before the message is about to be queued. This is a cut
+--            and primped message and this hook may trigger multiple times
+--            for a single longer message.
+-- "POSTQUEUE" - Called right after the message is queued. Sometimes ordering
+--                matters. You can't cancel or change the message from in
+--                here, and return values are ignored.
+--
 -- Returns true if the filter was added, and false if it already exists.
 --
-function Me.AddChatFilter( filter_function )
-	if FindTableValue( Me.chat_filters, filter_function ) then
+function Me.AddChatHook( point, func )
+	if not Me.chat_hooks[point] then
+		error( "Unknown chat hook point." )
+	end
+	
+	if FindTableValue( Me.chat_hooks[point], func ) then
 		return false
 	end
 	
-	table.insert( Me.chat_filters, filter_function )
+	table.insert( Me.chat_hooks[point], func )
 	return true
 end
 
 -------------------------------------------------------------------------------
--- You can also easily remove chat filters with this. Just pass in your
---  function reference that you had given to AddChatFilter.
+-- You can also easily remove chat hooks with this. Just pass in your args that
+--  you gave to AddChatHook.
 --
 -- Returns true if the filter was removed, and false if it wasn't found.
 --
-function Me.RemoveChatFilter( filter_function )
-	local index = FindTableValue( Me.chat_filters, filter_function )
+function Me.RemoveChatHook( point, func )
+	if not Me.chat_hooks[point] then
+		error( "Unknown chat hook point." )
+	end
+	
+	local index = FindTableValue( Me.chat_hooks[point], func )
 	if index then
-		table.remove( Me.chat_filters, index )
+		table.remove( Me.chat_hooks[point], index )
 		return true
 	end
 	
@@ -435,48 +450,55 @@ end
 -- You can also view the list of chat filters with this. This returns a direct
 --  reference to the internal table which shouldn't be touched from the 
 --  outside. This might seem like an unnecessary API feature, but someone might
-function Me.GetChatFilters() -- write something that 'previews' outgoing
-	return Me.chat_filters   -- messages, and would use this to apply the    
-end                          -- chat filters themselves and see how it works 
-                             -- out.
+function Me.GetChatHooks( point ) -- write something that 'previews' outgoing
+	return Me.chat_hooks[point]   -- messages, and would use this to apply the    
+end                            -- chat filters themselves and see how it works 
+                              -- out.
 -------------------------------------------------------------------------------
 -- Okay, now for WHATEVER reason, a filter function can dispatch new chat
 --  messages entirely. Presumably, they're discarding the original.
---
 -- Typical use is returning `false` from their filter function, after calling
 --  this multiple times to split the chat message into multiple ones. They
 --  can keep the original too if they want, and use this to send metadata or
 --  something.
---
 -- Chat messages that are spawned using this do not go through your message
 --  filter twice. When they're processed, the filter list resumes right after
 --  where yours was.
---
+-- If you DO want to make a completely fresh message that goes through the
+--  entire chain again, just make a direct call to ProcessIncomingChat.
 -- Look, just use your imagination. This is literally for our broken af 
 --  Tongues compatibility layer.
 --
--- filter: The filter function that is calling this. This may be nil, which
---         means that the new message will go through the entire filter chain
---         (including yours) again.
 -- msg, chat_type, arg3, target: The new chat message.
 --
-function Me.SendChatFromFilter( filter, msg, chat_type, arg3, target )
+-- This should only be used from "START" hooks.
+--
+function Me.SendChatFromHook( msg, chat_type, arg3, target )
 	local filter_index = 0
+	local filter = Me.hook_stack[#Me.hook_stack]
 	if filter then
-		for k,v in pairs( Me.chat_filters ) do
+		for k,v in pairs( Me.chat_hooks["START"] ) do
 			if v == filter then
 				filter_index = k
 				break
 			end
 		end
-		
-		if not filter_index then
-			error( "Filter isn't registered." )
-			return
-		end
 	end
 	
 	Me.ProcessIncomingChat( msg, chat_type, arg3, target, filter_index + 1 )
+end
+
+-------------------------------------------------------------------------------
+-- Sometimes you might want to send a chat message that bypasses 
+--  Emote Splitter's filters. This is dangerous, and you should know what 
+--  you're doing.
+-- Basically, it's for funky protocol stuff where you don't want your message
+--  to be touched, or even cut up. You'll get errors if you try to send
+--  messages too big on the normal channels.
+-- Messages that bypass the splitter still go through Emote Splitter's queue
+--  system.
+function Me.Suppress()
+	Me.suppress = true
 end
 
 -------------------------------------------------------------------------------
@@ -558,6 +580,26 @@ local function GetGuildStream( type )
 	end
 end
 
+function Me.ExecuteHooks( point, a, b, c, d, start )
+	start = start or 1
+	for index = start, #Me.chat_hooks[point] do
+		table.insert( Me.hook_stack, Me.chat_hooks[point][index] )
+		local a2, b2, c2, d2 = Me.chat_hooks[point][index]( a, b, c, d )
+		table.remove( Me.hook_stack )
+		-- If a chat hook returns `false` then we cancel this message. 
+		if a2 == false then
+			return false
+		elseif a2 then
+			-- Otherwise, if it's non-nil, we assume that they're changing
+			--  the arguments on their end, so we replace them with the
+			a, b, c, d = a2, b2, c2, d2 -- return values.
+		end
+		-- If the hook returned nil, then we don't do anything to the
+		--  message.
+	end
+	return a, b, c, d
+end
+
 -------------------------------------------------------------------------------
 -- This is where the magic happens...
 --
@@ -565,28 +607,25 @@ end
 -- We also add the chat type "BNET" where target is the presence ID, and "CLUB"
 --  where arg3 is the club ID, and target is the stream ID.
 --
--- `filter_start` is for SendChatFromFilter where the filter function is
+-- `hook_start` is for SendChatFromFilter where the filter function is
 --  spawning new chat messages.
 --
-function Me.ProcessIncomingChat( msg, chat_type, arg3, target, filter_start )
-	filter_start = filter_start or 1
-	msg = tostring(msg or "")
-	for filter_index = filter_start, #Me.chat_filters do
-		local filter = Me.chat_filters[filter_index]
-		local a, b, c, d = filter( msg, chat_type, language, target )
-		
-		-- If a chat filter returns `false` then we cancel this message. 
-		if a == false then  --
-			return          -- Just discard it.
-		elseif a then       --
-			-- Otherwise, if it's non-nil, we assume that they're changing
-			--  the arguments on their end, so we replace them with the
-			msg, chat_type, language, target = a, b, c, d -- return values.
-		end
-		
-		-- If the filter returned nil, then we don't do anything to the
-		--  message.
+function Me.ProcessIncomingChat( msg, chat_type, arg3, target, hook_start )
+	if Me.suppress then
+		-- We don't touch suppressed messages.
+		Me.suppress = false
+		Me.ExecuteHooks( "QUEUE", msg, chat_type, arg3, target )
+		Me.QueueChat( msg, chat_type, arg3, target )
+		Me.ExecuteHooks( "POSTQUEUE", msg, chat_type, arg3, target )
+		return
 	end
+	
+	msg = tostring(msg or "")
+	
+	msg, chat_type, arg3, target = 
+		Me.ExecuteHooks( "START", msg, chat_type, arg3, target, hook_start )
+	if msg == false then return end
+	
 	-- Now we cut this message up into potentially several pieces. First we're
 	--  passing it through this line splitting function, which gives us a table
 	msg = Me.SplitLines( msg )  -- of lines, or just { msg } if there aren't
@@ -656,6 +695,7 @@ function Me.ProcessIncomingChat( msg, chat_type, arg3, target, filter_start )
 		--  communities panel.
 		chunk_size = Me.club_chunk_size
 	end
+	
 	-- And we iterate over each, pass them to our main splitting function 
 	--  (the one that cuts them to smaller chunks), and then feed them off
 	--  to our main chat queue system. That call might even bypass our queue
@@ -663,8 +703,10 @@ function Me.ProcessIncomingChat( msg, chat_type, arg3, target, filter_start )
 	--  are right. But, otherwise this message has to wait its turn.
 	for _, line in ipairs( msg ) do
 		local chunks = Me.SplitMessage( line, chunk_size )
-		for i = 1, #chunks do                     
+		for i = 1, #chunks do
+			Me.ExecuteHooks( "QUEUE", chunks[i], chat_type, arg3, target )
 			Me.QueueChat( chunks[i], chat_type, arg3, target )
+			Me.ExecuteHooks( "POSTQUEUE", chunks[i], chat_type, arg3, target )
 		end
 	end
 end
@@ -1072,14 +1114,19 @@ end
 -- These two functions are called from our event handlers. 
 -- This one is called when we confirm a message was sent. The other is called
 --                            when we see we've gotten a "throttled" error.
-function Me.ChatConfirmed()
+-- The `dont_remove` argument means that we have modified the chat_queue
+--  outside, and shouldn't do table.remove in here.
+function Me.ChatConfirmed( dont_remove )
+	
 	Me.StopLatencyRecording()
 	Me.failures = 0
 	
 	-- Cancelling either the main 10-second timeout, or the throttled warning
 	--  timeout (see below).
 	Me.StopChatTimer()               -- Upon success, we just pop the chat
-	table.remove( Me.chat_queue, 1 ) --  queue and continue as normal.
+	if not dont_remove then          --  queue and continue as normal.
+		table.remove( Me.chat_queue, 1 )
+	end
 	Me.ChatQueue()
 end
 
@@ -1115,7 +1162,7 @@ function Me.ChatFailed( from_club )                         --  message.
 	else
 		wait_time = math.min( 10, math.max( 1.5 + Me.GetLatency(), CHAT_THROTTLE_WAIT ))
 	end
-		
+	
 	Me.SetChatTimer( Me.ChatFailedRetry, wait_time )
 	Me.SendingText_ShowFailed()  -- We also update our little indicator to show
 end                              --  this.
@@ -1288,6 +1335,44 @@ function Me.OnClubError( event, action, error, club_type )
 	end
 end
 
+function Me.OnChatMsgBnOffline( event, ... )
+	local c = Me.chat_queue[1]
+	if not c then
+		-- We aren't expecting anything.
+		return 
+	end
+	
+	local senderID = select( 13, ... )
+	
+	if c.type == "BNET" and c.target == senderID then
+		-- Can't send messages to this person. We might have additional
+		--  messages in the queue though, so we don't quite kill ourselves yet.
+		-- We just filter out any messages that are to this person.
+		local i = 1
+		while Me.chat_queue[i] do
+			local c = Me.chat_queue[i]
+			if c.type == "BNET" and c.target == senderID then
+				table.remove( Me.chat_queue, i )
+			else
+				i = i + 1
+			end
+		end
+		
+		-- Passing true here skips the table.remove inside.
+		Me.ChatConfirmed( true )
+	end
+	
+	-- Something to note about this, because it's potentially dangerous. It
+	--  just so happens to work out all right, currently, but that might change
+	--  in the future.
+	-- If you send a message to someone offline, then the offline
+	--  event usually (?) happens immediately. I'm not sure if it's actually
+	--  guaranteed to happen, but what happens is that this event triggers
+	--  INSIDE the chat queue, so calling ChatConfirmed /before/ we're
+	--  actually outside of our sending hook/system/everything. Just keep that
+	--  in mind and change things accordingly if it causes trouble.
+end
+
 -------------------------------------------------------------------------------
 -- Our hook for CHAT_MSG_GUILD and CHAT_MSG_OFFICER.
 --
@@ -1377,7 +1462,7 @@ function Me.MisspelledCompatibility()
 	--  space.
 	-- What we do in here is unhook that code and then do it ourselves in one
 	Misspelled:Unhook( "SendChatMessage" )	      -- of our own chat filters. 
-	Me.AddChatFilter( function( text, chat_type, arg3, target )
+	Me.AddChatHook( "START", function( text, chat_type, arg3, target )
 		text = Misspelled:RemoveHighlighting( text )
 		return text, chat_type, arg3, target
 	end)
@@ -1413,7 +1498,7 @@ function Me.TonguesCompatibility()
 		--  if we have Tongues loaded.
 		local a,b,c,d = ...
 		pcall( function()
-			SendChatMessage( a,b,c,d ) 
+			SendChatMessage( a,b,c,d )
 		end)
 		tongues_is_calling_send = false
 	end
@@ -1422,13 +1507,14 @@ function Me.TonguesCompatibility()
 	
 	-- Now... inside of our chat filter, we know if we're doing an organic call
 	--  or not... If it is, we replace this hook temporarily to use our most
-	--  special function SendChatFromFilter...
-	local filter_function
+	--  special function SendChatFromHook...
+	
 	local inside_send_function = function( ... )
-		Me.SendChatFromFilter( filter_function, ... )
+		print('ehe')
+		Me.SendChatFromHook( ... )
 	end
 	
-	filter_function = function( msg, type, _, target )
+	Me.AddChatHook( "START", function( msg, type, _, target )
 		if tongues_is_calling_send then 
 			-- If Tongues is calling this, then we just skip our filter.
 			return
@@ -1450,9 +1536,7 @@ function Me.TonguesCompatibility()
 		
 		-- :)
 		return false
-	end
-	
-	Me.AddChatFilter( filter_function )
+	end)
 end
 
 -- See you on Moon Guard! :)

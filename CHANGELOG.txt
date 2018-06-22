@@ -1,5 +1,7 @@
 ## 1.4.0
-Patch 8.0 support with communities chat.
+Patch 8.0 support.
+
+Communities chat support.
 
 Improvements to handle severe latency.
 
@@ -7,9 +9,11 @@ More responsive chat handling.
 
 Localization support (for the options menu). Please help translate this addon if you can. See the translations page on the CurseForge project!
 
-Better Misspelled compatibility
+Better Misspelled compatibility.
 
 Tongues compatibility. This is MINIMAL support, and I doubt the majority of Tongues' features will even work with multi-message emotes. This should work for your simple dialects and "affects" though.
+
+More API features.
 
 And... code commentary! I got carried away. :)
 
