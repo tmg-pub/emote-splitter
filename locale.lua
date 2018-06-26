@@ -29,16 +29,26 @@ local Locales = { -- For example, we'll delete this big table after
 
 --[===[@non-debug@
 
-Locales.frFR = --@localization(locale="frFR", format="lua_table", handle-unlocalized="ignore")@
-Locales.deDE = --@localization(locale="deDE", format="lua_table", handle-unlocalized="ignore")@
-Locales.itIT = --@localization(locale="itIT", format="lua_table", handle-unlocalized="ignore")@
-Locales.koKR = --@localization(locale="koKR", format="lua_table", handle-unlocalized="ignore")@
-Locales.zhCN = --@localization(locale="zhCN", format="lua_table", handle-unlocalized="ignore")@
-Locales.zhTW = --@localization(locale="zhTW", format="lua_table", handle-unlocalized="ignore")@
-Locales.ruRU = --@localization(locale="ruRU", format="lua_table", handle-unlocalized="ignore")@
-Locales.esES = --@localization(locale="esES", format="lua_table", handle-unlocalized="ignore")@
-Locales.esMX = --@localization(locale="esMX", format="lua_table", handle-unlocalized="ignore")@
-Locales.ptBR = --@localization(locale="ptBR", format="lua_table", handle-unlocalized="ignore")@
+Locales.frFR = 
+--@localization(locale="frFR", format="lua_table", handle-unlocalized="ignore")@
+Locales.deDE = 
+--@localization(locale="deDE", format="lua_table", handle-unlocalized="ignore")@
+Locales.itIT = 
+--@localization(locale="itIT", format="lua_table", handle-unlocalized="ignore")@
+Locales.koKR = 
+--@localization(locale="koKR", format="lua_table", handle-unlocalized="ignore")@
+Locales.zhCN = 
+--@localization(locale="zhCN", format="lua_table", handle-unlocalized="ignore")@
+Locales.zhTW = 
+--@localization(locale="zhTW", format="lua_table", handle-unlocalized="ignore")@
+Locales.ruRU = 
+--@localization(locale="ruRU", format="lua_table", handle-unlocalized="ignore")@
+Locales.esES = 
+--@localization(locale="esES", format="lua_table", handle-unlocalized="ignore")@
+Locales.esMX = 
+--@localization(locale="esMX", format="lua_table", handle-unlocalized="ignore")@
+Locales.ptBR = 
+--@localization(locale="ptBR", format="lua_table", handle-unlocalized="ignore")@
 
 --@end-non-debug@]===]
 
