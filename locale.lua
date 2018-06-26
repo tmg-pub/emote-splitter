@@ -21,10 +21,21 @@ local Locales = { -- For example, we'll delete this big table after
 		
 	};
 	
-	---------------------------------------------------------------------------
-	-- Add other languages in here, like frFR = {...} etc
-	---------------------------------------------------------------------------
 }                 
+
+---------------------------------------------------------------------------
+-- Other languages imported from Curse during packaging.
+---------------------------------------------------------------------------
+--@localization(locale="frFR", format="lua_table", table-name="Locales.frFR", handle-unlocalized="ignore")@
+--@localization(locale="deDE", format="lua_table", table-name="Locales.deDE", handle-unlocalized="ignore")@
+--@localization(locale="itIT", format="lua_table", table-name="Locales.itIT", handle-unlocalized="ignore")@
+--@localization(locale="koKR", format="lua_table", table-name="Locales.koKR", handle-unlocalized="ignore")@
+--@localization(locale="zhCN", format="lua_table", table-name="Locales.zhCN", handle-unlocalized="ignore")@
+--@localization(locale="zhTW", format="lua_table", table-name="Locales.zhTW", handle-unlocalized="ignore")@
+--@localization(locale="ruRU", format="lua_table", table-name="Locales.ruRU", handle-unlocalized="ignore")@
+--@localization(locale="esES", format="lua_table", table-name="Locales.esES", handle-unlocalized="ignore")@
+--@localization(locale="esMX", format="lua_table", table-name="Locales.esMX", handle-unlocalized="ignore")@
+--@localization(locale="ptBR", format="lua_table", table-name="Locales.ptBR", handle-unlocalized="ignore")@
 
 -------------------------------------------------------------------------------
 -- What we do now is take the enUS table, and then merge it with whatever
