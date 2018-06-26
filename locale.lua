@@ -26,7 +26,7 @@ local Locales = { -- For example, we'll delete this big table after
 ---------------------------------------------------------------------------
 -- Other languages imported from Curse during packaging.
 ---------------------------------------------------------------------------
----@type table<string, string>
+
 local locale_set = {}
 --@localization(locale="frFR", format="lua_table", table-name="locale_set", handle-unlocalized="ignore")@
 Locales.frFR = locale_set
