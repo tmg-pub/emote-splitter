@@ -87,9 +87,9 @@ Me.chat_busy   = false -- messages being sent. This isn't used for messages
 --  that with these rather than them hooking SendChatMessage directly, since 
 --  it will be undefined if their hook fires before or after the message is
 Me.chat_hooks = {    -- cut up by our functions. We have a few hook points
-	START = {};      --  here. One before everything. One before it's queued
-	QUEUE = {};      --  and one more post-queue. You can't modify or stop
-	POSTQUEUE = {};  --  messages in the QUEUE/POSTQUEUE hooks.
+	START     = {};  --  here. One before everything. One before it's queued
+	QUEUE     = {};  --  and one more post-queue. You can't modify or stop
+	POSTQUEUE = {};  --  messages in the POSTQUEUE hook.
 }
 Me.hook_stack = {} -- Our stack for hooks in case we're nesting things with
                    --  SendChatFromHook.
@@ -142,6 +142,11 @@ Me.max_message_length = 255 -- have some extra room to work with, making the
 Me.club_chunk_size  = 400
 Me.bnet_chunk_size  = 400
 Me.guild_chunk_size = 400
+-------------------------------------------------------------------------------
+-- And finally... any chat type keys found in here will override the chunk
+--  size for a certain chat type. This is used by RP Link, for custom chat
+--  types that split on the 400 mark.
+Me.chunk_size_overrides = {}
 -------------------------------------------------------------------------------
 -- We do some latency tracking ourselves, since the one provided by the game
 --  isn't very accurate at all when it comes to recent events. The one in the
@@ -502,6 +507,15 @@ function Me.Suppress()
 end
 
 -------------------------------------------------------------------------------
+-- Causes Emote Splitter to use this chunk size when cutting up messages of
+--  this chat type.
+-- Pass nil as size to remove an override.
+--
+function Me.SetChunkSizeOverride( chat_type, chunk_size )
+	Me.chunk_size_overrides[chat_type] = chunk_size
+end
+
+-------------------------------------------------------------------------------
 -- Function for splitting text on newlines or newline markers (literal "\n").
 --
 -- Returns a table of lines found in the text {line1, line2, ...}. Doesn't 
@@ -696,6 +710,9 @@ function Me.ProcessIncomingChat( msg, chat_type, arg3, target, hook_start )
 		chunk_size = Me.club_chunk_size
 	end
 	
+	local chunk_size_override = Me.chunk_size_overrides[chat_type]
+	if chunk_size_override then chunk_size = chunk_size_override end
+	
 	-- And we iterate over each, pass them to our main splitting function 
 	--  (the one that cuts them to smaller chunks), and then feed them off
 	--  to our main chat queue system. That call might even bypass our queue
@@ -704,9 +721,13 @@ function Me.ProcessIncomingChat( msg, chat_type, arg3, target, hook_start )
 	for _, line in ipairs( msg ) do
 		local chunks = Me.SplitMessage( line, chunk_size )
 		for i = 1, #chunks do
-			Me.ExecuteHooks( "QUEUE", chunks[i], chat_type, arg3, target )
-			Me.QueueChat( chunks[i], chat_type, arg3, target )
-			Me.ExecuteHooks( "POSTQUEUE", chunks[i], chat_type, arg3, target )
+			local chunk_msg, chunk_type, chunk_arg3, chunk_target =
+				Me.ExecuteHooks( "QUEUE", chunks[i], chat_type, arg3, target )
+				
+			if chunk_msg then
+				Me.QueueChat( chunk_msg, chunk_type, chunk_arg3, chunk_target )
+				Me.ExecuteHooks( "POSTQUEUE", chunk_msg, chunk_type, chunk_arg3, chunk_target )
+			end
 		end
 	end
 end
@@ -1497,9 +1518,7 @@ function Me.TonguesCompatibility()
 		--  get stuck, and it's likely that we'll run into a handful of errors
 		--  if we have Tongues loaded.
 		local a,b,c,d = ...
-		pcall( function()
-			SendChatMessage( a,b,c,d )
-		end)
+		pcall( SendChatMessage, a, b, c, d )
 		tongues_is_calling_send = false
 	end
 	
@@ -1510,7 +1529,6 @@ function Me.TonguesCompatibility()
 	--  special function SendChatFromHook...
 	
 	local inside_send_function = function( ... )
-		print('ehe')
 		Me.SendChatFromHook( ... )
 	end
 	
@@ -1527,9 +1545,7 @@ function Me.TonguesCompatibility()
 		
 		-- We need to use pcall, otherwise our Hooks.Send is going to be
 		--  botched if we break out of here from an error.
-		pcall( function() 
-			stolen_handle_send( Tongues, msg, type, langID, lang, target )
-		end)
+		pcall( stolen_handle_send, Tongues, msg, type, langID, lang, target )
 		
 		-- And then put it back...
 		Tongues.Hooks.Send = outside_send_function
