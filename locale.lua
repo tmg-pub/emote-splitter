@@ -26,16 +26,27 @@ local Locales = { -- For example, we'll delete this big table after
 ---------------------------------------------------------------------------
 -- Other languages imported from Curse during packaging.
 ---------------------------------------------------------------------------
---@localization(locale="frFR", format="lua_table", table-name="Locales.frFR", handle-unlocalized="ignore")@
---@localization(locale="deDE", format="lua_table", table-name="Locales.deDE", handle-unlocalized="ignore")@
---@localization(locale="itIT", format="lua_table", table-name="Locales.itIT", handle-unlocalized="ignore")@
---@localization(locale="koKR", format="lua_table", table-name="Locales.koKR", handle-unlocalized="ignore")@
---@localization(locale="zhCN", format="lua_table", table-name="Locales.zhCN", handle-unlocalized="ignore")@
---@localization(locale="zhTW", format="lua_table", table-name="Locales.zhTW", handle-unlocalized="ignore")@
---@localization(locale="ruRU", format="lua_table", table-name="Locales.ruRU", handle-unlocalized="ignore")@
---@localization(locale="esES", format="lua_table", table-name="Locales.esES", handle-unlocalized="ignore")@
---@localization(locale="esMX", format="lua_table", table-name="Locales.esMX", handle-unlocalized="ignore")@
---@localization(locale="ptBR", format="lua_table", table-name="Locales.ptBR", handle-unlocalized="ignore")@
+local locale_set = {}
+--@localization(locale="frFR", format="lua_table", table-name="locale_set", handle-unlocalized="ignore")@
+Locales.frFR = locale_set
+--@localization(locale="deDE", format="lua_table", table-name="locale_set", handle-unlocalized="ignore")@
+Locales.deDE = locale_set
+--@localization(locale="itIT", format="lua_table", table-name="locale_set", handle-unlocalized="ignore")@
+Locales.itIT = locale_set
+--@localization(locale="koKR", format="lua_table", table-name="locale_set", handle-unlocalized="ignore")@
+Locales.koKR = locale_set
+--@localization(locale="zhCN", format="lua_table", table-name="locale_set", handle-unlocalized="ignore")@
+Locales.zhCN = locale_set
+--@localization(locale="zhTW", format="lua_table", table-name="locale_set", handle-unlocalized="ignore")@
+Locales.zhTW = locale_set
+--@localization(locale="ruRU", format="lua_table", table-name="locale_set", handle-unlocalized="ignore")@
+Locales.ruRU = locale_set
+--@localization(locale="esES", format="lua_table", table-name="locale_set", handle-unlocalized="ignore")@
+Locales.esES = locale_set
+--@localization(locale="esMX", format="lua_table", table-name="locale_set", handle-unlocalized="ignore")@
+Locales.esMX = locale_set
+--@localization(locale="ptBR", format="lua_table", table-name="locale_set", handle-unlocalized="ignore")@
+Locales.ptBR = locale_set
 
 -------------------------------------------------------------------------------
 -- What we do now is take the enUS table, and then merge it with whatever
