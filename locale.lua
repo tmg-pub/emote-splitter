@@ -42,7 +42,7 @@ Locales.zhCN = locale_set
 Locales.zhTW = locale_set
 --@localization(locale="ruRU", format="lua_table", table-name="locale_set", handle-unlocalized="ignore")@
 Locales.ruRU = locale_set
---@localization(locale="esES", format="lua_table", table-name="locale_set", handle-unlocalized="ignore")@
+--@localization(locale="esES", format="global_strings", table-name="locale_set", handle-unlocalized="ignore")@
 Locales.esES = locale_set
 --@localization(locale="esMX", format="lua_table", table-name="locale_set", handle-unlocalized="ignore")@
 Locales.esMX = locale_set
