@@ -74,9 +74,46 @@ local L = Me.Locale -- Easy access to our locale data.
 --    arg3: Language index or club ID.
 --    target: Channel, whisper target, BNet presence ID, or club stream ID.
 --
-Me.chat_queue = {} -- This is a FIFO, first-in-first-out, 
-                   --  queue[1] is the first to go.
-                   --
+-- 1.4.2: We've got a few more fields now too
+--    prio: Message priority (lower numbers are sent before higher numbers)
+--    time: GetTime() when this message was queued, so we can send buddies
+--           together.
+-- In 1.4.2, we have multiple channels to send messages of different types,
+--  since they use different verification methods. For example, you can send
+--  a club message and a say message at the same time.
+--
+-- Queue 1: SAY, EMOTE, YELL
+-- Confirmation: CHAT_MSG_SAY, CHAT_MSG_EMOTE, CHAT_MSG_YELL
+-- Failure: CHAT_MSG_SYSTEM
+--
+-- Queue 2: GUILD, OFFICER, CLUB
+-- Confirmation: CHAT_MSG_GUILD, CHAT_MSG_OFFICER, 
+--                CHAT_MSG_COMMUNITIES_CHANNEL
+-- Failure: CLUB_ERROR
+--
+-- Queue 3: BNET
+-- Confirmation: CHAT_MSG_BN_WHISPER_INFORM
+-- Failure: None (not ideal, just times out.)
+-- Fatal: CHAT_MSG_BN_WHISPER_PLAYER_OFFLINE
+Me.chat_queue    = {}
+Me.channels_busy = {}
+-- The way we dequeue is a little complex. It's not a plain FIFO anymore.
+-- Firstly we sort by priority, lower numbers are sent before higher numbers.
+-- However, if priority is same and then there are messages of different
+--  channels that have the same timestamp, then those are paired. For example:
+--  SAY_QUEUE: HI, HELLO, BYE, WHOA
+--  CLUB_QUEUE: WHOA_RELAY
+-- If WHOA_RELAY has the same time as WHOA, then it will wait until WHOA is
+--  sent from the SAY queue before sending. Otherwise, it's emptied at 
+--  the start with HI.
+--
+-- The guarantees are:
+--   Chat types queued on the same frame are sent at the same time. (They might
+--    not go out on the line at the same time due to throttling, but they will
+--    be close.)
+--   Chat messages of higher priorities are sent before lower priority.
+--   Each channel's messages will always be sent and arrive in-order.
+--   
 -- This is a flag that tells us when the chat-queue system is busy. Or in
 --  other words, it tells us when we're waiting on confirmation for our 
 Me.chat_busy   = false -- messages being sent. This isn't used for messages
@@ -976,14 +1013,17 @@ function Me.StopChatTimer()         -- And to cancel the timer, we just set the
 end                                 --
                                     --								
 -------------------------------------------------------------------------------
-local QUEUED_TYPES = {  -- These are the types that aren't passed directly to
-	SAY     = true;     --  the throttler for output. They're queued and sent
-	EMOTE   = true;     --  one at a time, so that we can verify if they went
-	CLUB    = true;     --  through or not.
-	BNET    = true;     -- We handle GUILD and OFFICER like this too since
-	GUILD   = true;     -- they're also treated like club channels in 8.0.
-	OFFICER = true;     -- Essentially, anything that can fail from throttle
-}                       --  or other issues should be put in here.
+local QUEUED_TYPES = { -- These are the types that aren't passed directly to
+	SAY     = 1;       --  the throttler for output. They're queued and sent
+	EMOTE   = 1;       --  one at a time, so that we can verify if they went
+	YELL    = 1;       --  through or not.
+	CLUB    = 2;     
+	GUILD   = 2;       -- We handle GUILD and OFFICER like this too since
+	OFFICER = 2;       --  they're also treated like club channels in 8.0.
+	BNET    = 3;       -- Essentially, anything that can fail from throttle
+}                      --  or other issues should be put in here.
+-- In 1.4.2 we also have a few different queue types to send traffic with
+--  different handlers at the same time.
 
 -- [[7.x compat]] Remove this after 7.x; we don't handle GUILD/OFFICER like
 if not C_Club then             -- this.
@@ -1004,19 +1044,24 @@ end
 function Me.QueueChat( msg, type, arg3, target )
 	type = type:upper()
 	
+	local my_prio = 1 -- todo
+		
 	local msg_pack = {
 		msg    = msg;
 		type   = type;
 		arg3   = arg3;
 		target = target;
+		time   = GetTime();
+		prio   = my_prio;
 	}
+	
+	local queue_index = QUEUED_TYPES[type]
 	
 	-- Now we've got two paths here. One leads to the chat queue, the other
 	--  will directly send the messages that don't need to be queued.
 	--  SAY, EMOTE, and YELL are affected by the server throttler. BNET isn't,
 	--  but we treat it the same way to correct the out-of-order bug.
-	if QUEUED_TYPES[type] then        -- (As of writing, I'm assuming
-	                                  --  that's still a thing.)
+	if queue_index then
 		-- A certain problem with this queue is that sometimes we'll be stuck
 		--  waiting for a response from the server, but nothing is coming
 		--  because we weren't actually able to send the chat message. There's
@@ -1040,8 +1085,14 @@ function Me.QueueChat( msg, type, arg3, target )
 			return
 		end
 		
-		-- It looks like we're all good to queue this puppy up and start the
-		table.insert( Me.chat_queue, msg_pack )  -- system.
+		local previous_index
+		for k, v in ipairs( Me.chat_queue ) do
+			if v.prio > my_prio then
+				previous_index = k
+				break
+			end
+		end
+		table.insert( Me.chat_queue, (previous_index or #Me.chat_queue) + 1, msg_pack )
 		Me.StartChat()
 		
 	else -- For other message types like party, raid, whispers, channels, we
@@ -1094,7 +1145,7 @@ function Me.ChatQueue()
 	if #Me.chat_queue == 0 then -- back to idle mode.
 		Me.chat_busy = false
 		Me.SendingText_Hide()
-		return 
+		return
 	end
 	
 	-- Otherwise, we're gonna send another message. 
