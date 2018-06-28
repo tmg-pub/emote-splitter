@@ -99,8 +99,11 @@ local L = Me.Locale -- Easy access to our locale data.
 Me.chat_queue    = {}
 Me.channels_busy = {}
 local CHANNEL_SAY     = 1
-local CHANNEL_CLUB    = 2
-local MY_NUM_CHANNELS = 2
+local CHANNEL_BNET    = 2
+local CHANNEL_CLUB    = 3
+local MY_NUM_CHANNELS = 3
+
+Me.traffic_priority = 1
 -- The way we dequeue is a little complex. It's not a plain FIFO anymore.
 -- Firstly we sort by priority, lower numbers are sent before higher numbers.
 -- However, if priority is same and then there are messages of different
@@ -545,6 +548,14 @@ end
 --  system.
 function Me.Suppress()
 	Me.suppress = true
+end
+
+-------------------------------------------------------------------------------
+-- This is a feature added mainly for Cross RP, to keep the text protocol's
+--  traffic away from clogging chat text from going through. Higher numbers are
+--  always sent after lower priority numbers. (1 is highest priority)
+function Me.SetTrafficPriority( priority )
+	Me.traffic_priority = priority
 end
 
 -------------------------------------------------------------------------------

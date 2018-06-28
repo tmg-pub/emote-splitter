@@ -56,7 +56,7 @@ local _, Me = ...
 --  we don't waste much time being very exact with our calculations.
 -- BURST is how much bandwidth we can store if there is a period of inactivity.
 local THROTTLE_BPS   = 1000
-local THROTTLE_BURST = 3000
+local THROTTLE_BURST = 3500
 local TIMER_PERIOD   = 0.25
 local MSG_OVERHEAD   = 25
 -------------------------------------------------------------------------------
@@ -77,7 +77,7 @@ Me.out_chat_buffer = {}
 -- `send_queue_started` is when the sending loop is active, and may stay
 --  active over multiple frames. `throttler_started` is only true if the
 --  throttler is waiting in a timer. Technically, we don't need two variables
---  for this. We could merge them, but I feel that it's cleaner to have two
+--  for this. We could merge them, but I feel that it's cleaner to have two,
 --  especially moving forward if we add more things. Throttler_started is
 --  basically just a flag so we don't call OnThrottlerStart multiple times.
 Me.send_queue_started = false
