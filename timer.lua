@@ -21,7 +21,7 @@ end
 --                       merged into a single call at the end of the
 --                       cooldown period. This may trigger inside
 --                       this call.
-function Me.Timer_Start( slot, mode, period, func )
+function Me.Timer_Start( slot, mode, period, func, ... )
 	if mode == "cooldown" and not Me.timers[slot] then
 		local time_to_next = (Me.last_triggered[slot] or (-period)) + period - GetTime()
 		if time_to_next <= 0 then
@@ -49,12 +49,14 @@ function Me.Timer_Start( slot, mode, period, func )
 		cancel = false;
 	}
 	
+	local args = {...}
+	
 	Me.timers[slot] = this_timer
 	C_Timer.After( period, function()
 		if this_timer.cancel then return end
 		Me.timers[slot] = nil
 		Me.last_triggered[slot] = GetTime()
-		func()
+		func( unpack( args ))
 	end)
 end
 

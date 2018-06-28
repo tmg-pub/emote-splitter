@@ -1,3 +1,7 @@
+## 1.4.2
+Core API changes for Cross RP.
+
+
 ## 1.4.1
 Sorry about that, the last release was broken during packaging.
 
