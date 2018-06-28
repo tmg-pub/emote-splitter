@@ -86,21 +86,21 @@ local L = Me.Locale -- Easy access to our locale data.
 -- Confirmation: CHAT_MSG_SAY, CHAT_MSG_EMOTE, CHAT_MSG_YELL
 -- Failure: CHAT_MSG_SYSTEM
 --
+-- Queue /: BNET (removed due to unneeded complexity)
+-- Confirmation: CHAT_MSG_BN_WHISPER_INFORM
+-- Failure: CHAT_MSG_SYSTEM (Needs special care to play along with /say queue)
+-- Fatal: CHAT_MSG_BN_WHISPER_PLAYER_OFFLINE
+--
 -- Queue 2: GUILD, OFFICER, CLUB
 -- Confirmation: CHAT_MSG_GUILD, CHAT_MSG_OFFICER, 
 --                CHAT_MSG_COMMUNITIES_CHANNEL
 -- Failure: CLUB_ERROR
 --
--- Queue 3: BNET
--- Confirmation: CHAT_MSG_BN_WHISPER_INFORM
--- Failure: None (not ideal, just times out.)
--- Fatal: CHAT_MSG_BN_WHISPER_PLAYER_OFFLINE
 Me.chat_queue    = {}
 Me.channels_busy = {}
 local CHANNEL_SAY     = 1
-local CHANNEL_BNET    = 2
-local CHANNEL_CLUB    = 3
-local MY_NUM_CHANNELS = 3
+local CHANNEL_CLUB    = 2
+local MY_NUM_CHANNELS = 2
 -- The way we dequeue is a little complex. It's not a plain FIFO anymore.
 -- Firstly we sort by priority, lower numbers are sent before higher numbers.
 -- However, if priority is same and then there are messages of different
@@ -120,7 +120,7 @@ local MY_NUM_CHANNELS = 3
 --   
 -- This is a flag that tells us when the chat-queue system is busy. Or in
 --  other words, it tells us when we're waiting on confirmation for our 
-Me.chat_busy   = false -- messages being sent. This isn't used for messages
+--Me.chat_busy   = false -- messages being sent. This isn't used for messages
                        --  not queued (party/raid/whisper etc).
 -------------------------------------------------------------------------------
 -- This is a collection of functions that can be added by other third parties 
@@ -1018,13 +1018,13 @@ end                                 --
                                     --		]]						
 -------------------------------------------------------------------------------
 local QUEUED_TYPES = { -- These are the types that aren't passed directly to
-	SAY     = 1;       --  the throttler for output. They're queued and sent
-	EMOTE   = 1;       --  one at a time, so that we can verify if they went
-	YELL    = 1;       --  through or not.
-	BNET    = 2;     
-	GUILD   = 3;       -- We handle GUILD and OFFICER like this too since
-	OFFICER = 3;       --  they're also treated like club channels in 8.0.
-	CLUB    = 3;       -- Essentially, anything that can fail from throttle
+	SAY     = CHANNEL_SAY; --  the throttler for output. They're queued and sent
+	EMOTE   = CHANNEL_SAY; --  one at a time, so that we can verify if they went
+	YELL    = CHANNEL_SAY; --  through or not.
+	BNET    = CHANNEL_SAY;     
+	GUILD   = CHANNEL_CLUB; -- We handle GUILD and OFFICER like this too since
+	OFFICER = CHANNEL_CLUB; --  they're also treated like club channels in 8.0.
+	CLUB    = CHANNEL_CLUB; -- Essentially, anything that can fail from throttle
 }                      --  or other issues should be put in here.
 -- In 1.4.2 we also have a few different queue types to send traffic with
 --  different handlers at the same time.
@@ -1107,6 +1107,12 @@ function Me.QueueChat( msg, type, arg3, target )
 	end                            --  messages out on the line.
 end   
 
+function Me.AreChannelsBusy()
+	for i = 1,MY_NUM_CHANNELS do
+		if Me.channels_busy[i] then return true end
+	end
+end
+
 -------------------------------------------------------------------------------
 -- These are callbacks from the throttler (throttler.lua). They're only called
 --  when we're sending a lot of chat, and the throttler has delayed for a bit.
@@ -1117,7 +1123,7 @@ end
 
 -- And this is after all messages are sent.
 function Me.OnThrottlerStop()
-	if not Me.chat_busy then
+	if not Me.AreChannelsBusy() then
 		Me.SendingText_Hide()
 	end
 end
@@ -1128,10 +1134,10 @@ end
 function Me.StartChat()
 	-- It's safe to call this function whenever for whatever. If the queue is
 	--  already started, or if the queue is empty, it does nothing.
-	if Me.chat_busy then return end
-	if #Me.chat_queue == 0 then return end
-	Me.chat_busy = true
-	Me.failures = 0
+--	if Me.chat_busy then return end
+--	if #Me.chat_queue == 0 then return end
+--	Me.chat_busy = true
+	
 	
 	-- I always like APIs that have simple checks like that in place. Sure it
 	--  might be a /little/ bit less efficient at times, but the resulting code
@@ -1149,8 +1155,12 @@ function Me.ChatQueueNext()
 	-- This is like the "continue" function for our chat queue system.
 	-- First we're checking if we're done. If we are, then the queue goes
 	if #Me.chat_queue == 0 then -- back to idle mode.
-		Me.chat_busy = false
-		Me.SendingText_Hide()
+		if not Me.AreChannelsBusy() then
+			Me.SendingText_Hide()
+			Me.failures = 0
+		end
+		--Me.chat_busy = false
+		
 		return
 	end
 	
@@ -1166,8 +1176,6 @@ function Me.ChatQueueNext()
 	for i = 1, MY_NUM_CHANNELS do
 		block_channel[i] = Me.channels_busy[i]
 	end
-	
-	print( "chat queue next 1" )
 
 	for index = 1, #Me.chat_queue do
 		local q = Me.chat_queue[index]
@@ -1182,7 +1190,6 @@ function Me.ChatQueueNext()
 		local end_of_set = final_entry or Me.chat_queue[index+1].frame ~= frame
 		
 		if end_of_set then
-			print( "chat queue next 2" )
 			-- the end of this set when the frame or priority changes, or its the last
 			-- entry
 			local cansend = true
@@ -1194,10 +1201,8 @@ function Me.ChatQueueNext()
 			end
 			
 			if cansend then
-				print( "chat queue next 3" )
 				for i = 1, MY_NUM_CHANNELS do
 					if to_channels[i] then
-						print( "chat queue next 4", i )
 						Me.Timer_Start( "channel_"..i, "push", CHAT_TIMEOUT, Me.ChatDeath, i )
 						Me.CommitChat( to_channels[i] )
 						Me.channels_busy[i] = q
@@ -1250,7 +1255,7 @@ end
 --                        --  point, we've waited extremely long for a message.
 function Me.ChatDeath()   -- Something went wrong or the user is suffering from
 	Me.chat_queue = {}    --  intense latency. We just want to reset 
-	Me.chat_busy = false  --  completely to recover.
+	--Me.chat_busy = false  --  completely to recover.
 	for i = 1, MY_NUM_CHANNELS do
 		Me.channels_busy[i] = nil
 	end
@@ -1445,7 +1450,7 @@ function Me.OnChatMsgSystem( event, message, sender, _, _, target )
 	-- We're just looking out in here for throttle errors.
 	--if #Me.chat_queue == 0 then -- If the queue isn't started, then we aren't
 		                        -- expecting anything.
-	if not Me.channels_busy[CHANNEL_SAY] then
+	if not Me.channels_busy[CHANNEL_SAY] and not Me.channels_busy[CHANNEL_BNET] then
 		return
 	end
 	
@@ -1531,7 +1536,6 @@ function Me.OnChatMsgBnOffline( event, ... )
 			end
 		end
 		
-		-- Passing true here skips the table.remove inside.
 		Me.ChatConfirmed( CHANNEL_BNET )
 	end
 	
