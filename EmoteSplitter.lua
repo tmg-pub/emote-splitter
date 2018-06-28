@@ -76,19 +76,19 @@ local L = Me.Locale -- Easy access to our locale data.
 --
 -- 1.4.2: We've got a few more fields now too
 --    prio: Message priority (lower numbers are sent before higher numbers)
---    time: GetTime() when this message was queued, so we can send buddies
---           together.
+--    id: Unique message ID. In the future this will help coordinate between
+--         queues.
 -- In 1.4.2, we have multiple channels to send messages of different types,
 --  since they use different verification methods. For example, you can send
 --  a club message and a say message at the same time.
 --
--- Queue 1: SAY, EMOTE, YELL
+-- Queue 1: SAY, EMOTE, YELL, BNET
 -- Confirmation: CHAT_MSG_SAY, CHAT_MSG_EMOTE, CHAT_MSG_YELL
 -- Failure: CHAT_MSG_SYSTEM
 --
--- Queue /: BNET (removed due to unneeded complexity)
+-- Queue 1: BNET (removed due to unneeded complexity)
 -- Confirmation: CHAT_MSG_BN_WHISPER_INFORM
--- Failure: CHAT_MSG_SYSTEM (Needs special care to play along with /say queue)
+-- Failure: CHAT_MSG_SYSTEM
 -- Fatal: CHAT_MSG_BN_WHISPER_PLAYER_OFFLINE
 --
 -- Queue 2: GUILD, OFFICER, CLUB
@@ -96,12 +96,17 @@ local L = Me.Locale -- Easy access to our locale data.
 --                CHAT_MSG_COMMUNITIES_CHANNEL
 -- Failure: CLUB_ERROR
 --
+-- This is so that if you do SendChatMessage and then C_Club.SendMessage
+--  at the same time, we can send both of these messages together. It's
+--  mostly a feature meant to help Cross RP send its messages in unison.
+--  Minimal improvement for normal cases.
 Me.chat_queue    = {}
 Me.channels_busy = {}
+Me.message_id    = 1
 local CHANNEL_SAY     = 1
-local CHANNEL_BNET    = 2
-local CHANNEL_CLUB    = 3
-local MY_NUM_CHANNELS = 3
+local CHANNEL_BNET    = 1
+local CHANNEL_CLUB    = 2
+local MY_NUM_CHANNELS = 2
 
 Me.traffic_priority = 1
 -- The way we dequeue is a little complex. It's not a plain FIFO anymore.
@@ -556,6 +561,60 @@ end
 --  always sent after lower priority numbers. (1 is highest priority)
 function Me.SetTrafficPriority( priority )
 	Me.traffic_priority = priority
+end
+
+-------------------------------------------------------------------------------
+-- Insert an entry into the chat queue, honoring priority.
+--
+local function ChatQueueInsert( entry )
+	local insert_index = #Me.chat_queue+1
+	for k, v in ipairs( Me.chat_queue ) do
+		if v.prio > entry.prio then
+			insert_index = k
+			break
+		end
+	end
+	table.insert( Me.chat_queue, insert_index, entry )
+end
+
+-------------------------------------------------------------------------------
+-- Inserts a BREAK into the queue. This is a special message that doesn't allow
+--  grouping across the break. This has limited purpose, but Cross RP uses it
+--  to group messages together with the club channels.
+--
+-- Examples:
+--   SAY   HELLO         \ Sent together, as they're different channels
+--   CLUB  RELAY_HELLO   /
+--   CLUB  SOMETHING     \ Sent together with next batch.
+--   SAY   HELLO         / 
+--   CLUB  RELAY_HELLO   - This RELAY message is sent too late, and by itself.
+--
+--   SAY   HELLO         \ Sent together, as they're different channels
+--   CLUB  RELAY_HELLO   /
+--   CLUB  SOMETHING     \ Sent together with next batch.
+--   BREAK               -- Cuts grouping.
+--   SAY   HELLO         \ Sent together properly.
+--   CLUB  RELAY_HELLO   /
+--
+-- This may have more uses in the future. Another example.
+--   SAY   HELLO        -> Sent on first batch.
+--   BREAK              -> Waits for queue to empty
+--   CLUB  YES          -> Sent in order one after another.
+--   CLUB  YES          -
+--   CLUB  YES          - If the break wasn't there, all of these could be
+--   CLUB  YES          -  sent while that important HELLO up there was still
+--                      -  pending. See?
+--
+-- What BREAK also does is waits for the throttler to catch up on BURST
+--  bandwidth, essentially making it guaranteed that you're going to be sending
+--  your grouped messages in a tight pair.
+--
+function Me.QueueBreak( priority )
+	priority = priority or 1
+	ChatQueueInsert({ 
+		type = "BREAK";
+		prio = priority;
+	})
 end
 
 -------------------------------------------------------------------------------
@@ -1067,10 +1126,10 @@ function Me.QueueChat( msg, type, arg3, target )
 		type   = type;
 		arg3   = arg3;
 		target = target;
-		time   = GetTime();
-		tag    = my_tag;
-		prio   = my_prio;
+		id     = Me.message_id;
+		prio   = Me.traffic_priority;
 	}
+	Me.message_id = Me.message_id + 1
 	
 	local queue_index = QUEUED_TYPES[type]
 	
@@ -1102,14 +1161,7 @@ function Me.QueueChat( msg, type, arg3, target )
 			return
 		end
 		
-		local previous_index
-		for k, v in ipairs( Me.chat_queue ) do
-			if v.prio > my_prio then
-				previous_index = k
-				break
-			end
-		end
-		table.insert( Me.chat_queue, (previous_index or #Me.chat_queue) + 1, msg_pack )
+		ChatQueueInsert( msg_pack )
 		Me.StartChat()
 		
 	else -- For other message types like party, raid, whispers, channels, we
@@ -1118,10 +1170,17 @@ function Me.QueueChat( msg, type, arg3, target )
 	end                            --  messages out on the line.
 end   
 
-function Me.AreChannelsBusy()
+function Me.AnyChannelsBusy()
 	for i = 1,MY_NUM_CHANNELS do
 		if Me.channels_busy[i] then return true end
 	end
+end
+
+function Me.AllChannelsBusy()
+	for i = 1,MY_NUM_CHANNELS do
+		if not Me.channels_busy[i] then return false end
+	end
+	return true
 end
 
 -------------------------------------------------------------------------------
@@ -1134,7 +1193,7 @@ end
 
 -- And this is after all messages are sent.
 function Me.OnThrottlerStop()
-	if not Me.AreChannelsBusy() then
+	if not Me.AnyChannelsBusy() then
 		Me.SendingText_Hide()
 	end
 end
@@ -1166,80 +1225,55 @@ function Me.ChatQueueNext()
 	-- This is like the "continue" function for our chat queue system.
 	-- First we're checking if we're done. If we are, then the queue goes
 	if #Me.chat_queue == 0 then -- back to idle mode.
-		if not Me.AreChannelsBusy() then
+		if not Me.AnyChannelsBusy() then
 			Me.SendingText_Hide()
 			Me.failures = 0
 		end
-		--Me.chat_busy = false
-		
 		return
 	end
 	
 	-- Otherwise, we're gonna send another message. 
 	Me.SendingText_ShowSending()
 	
-	-- This is the priority we're handling this round.
-	local priority = Me.chat_queue[1].prio
-	local frame = Me.chat_queue[1].frame
-	
-	local to_channels = {}
-	local block_channel = {}
-	for i = 1, MY_NUM_CHANNELS do
-		block_channel[i] = Me.channels_busy[i]
-	end
-
-	for index = 1, #Me.chat_queue do
-		local q = Me.chat_queue[index]
-		
-		local channel = QUEUED_TYPES[q.type]
-		
-		if not to_channels[channel] and not block_channel[channel] then
-			to_channels[channel] = q
-		end
-		
-		local final_entry = (not Me.chat_queue[index+1]) or Me.chat_queue[index+1].prio ~= priority
-		local end_of_set = final_entry or Me.chat_queue[index+1].frame ~= frame
-		
-		if end_of_set then
-			-- the end of this set when the frame or priority changes, or its the last
-			-- entry
-			local cansend = true
-			for i = 1, MY_NUM_CHANNELS do
-				if to_channels[i] and block_channel[i] then
-					cansend = false
+	local i = 1
+	while i <= #Me.chat_queue do
+		local q = Me.chat_queue[i]
+		if q.type == "BREAK" then
+			print( "DEBUG - FOUND BREAK, HEALTH", Me.ThrottlerHealth() )
+			if Me.AnyChannelsBusy() then
+				print( "DEBUG - FOUND BREAK - CHANNELS BUSY" )
+				break
+			else
+				
+				if Me.ThrottlerHealth() < 25 then
+					print( "DEBUG - FOUND BREAK - THROTTLE WAIT" )
+					Me.Timer_Start( "throttle_break", "ignore", 0.1, Me.ChatQueueNext )
+					return
+				end
+				table.remove( Me.chat_queue, i )
+			end
+		else
+			local channel = QUEUED_TYPES[q.type]
+			if not Me.channels_busy[channel] then
+				Me.Timer_Start( "channel_"..channel, "push", CHAT_TIMEOUT, Me.ChatDeath, channel )
+				Me.CommitChat( q )
+				Me.channels_busy[channel] = q
+				if Me.AllChannelsBusy() then
 					break
 				end
 			end
-			
-			if cansend then
-				for i = 1, MY_NUM_CHANNELS do
-					if to_channels[i] then
-						Me.Timer_Start( "channel_"..i, "push", CHAT_TIMEOUT, Me.ChatDeath, i )
-						Me.CommitChat( to_channels[i] )
-						Me.channels_busy[i] = q
-					end
-				end
-			end
-			
-			if final_entry then break end
-			
-			local done = true
-			for i = 1, MY_NUM_CHANNELS do
-				if to_channels[i] then
-					block_channel[i] = true
-				end
-				
-				if not block_channel[i] then
-					done = false
-				end
-			end
-			
-			-- all channels busy
-			if done then break end
-			
-			frame = q.frame
-			to_channels = {}
+			i = i + 1
 		end
+	end
+	
+	if not Me.AnyChannelsBusy() then
+		--@debug@
+		if #Me.chat_queue ~= 0 then
+			error( "Chat queue not empty when returning from ChatQueueNext" )
+		end
+		--@end-debug@
+		Me.SendingText_Hide()
+		Me.failures = 0
 	end
 	
 	-- We fetch the first entry in the chat queue and then "commit" it. Once
@@ -1334,7 +1368,7 @@ function Me.ChatFailed( channel )                         --  message.
 		wait_time = math.min( 10, math.max( 1.5 + Me.GetLatency(), CHAT_THROTTLE_WAIT ))
 	end
 	
-	Me.SetChatTimer( Me.ChatFailedRetry, wait_time )
+	Me.Timer_Start( "channel_"..channel, "push", wait_time, Me.ChatFailedRetry, channel )
 	Me.SendingText_ShowFailed()  -- We also update our little indicator to show
 end                              --  this.
 
@@ -1371,8 +1405,17 @@ end
 --
 function Me.TryConfirm( kind, guid )
 	local channel = QUEUED_TYPES[kind]
-	if Me.channels_busy[channel] and kind == Me.channels_busy[channel].type and guid == PLAYER_GUID then
-		-- confirmed this channel
+	if not channel then return end
+	
+	-- It'd be better if we could verify the message contents, to make sure
+	--  that we caught the right event, but lots of things can change the 
+	--  resulting message, especially on the server side (for example, if
+	--  you're drunk, or if you send %t which gets replaced by your target).
+	-- So... we just do it blind, instead. If we send two SAY messages and
+	--  and EMOTE in order, then we wait for two SAY events and one EMOTE
+	if Me.channels_busy[channel] and kind == Me.channels_busy[channel].type 
+						                       and guid == PLAYER_GUID then
+		-- Confirmed this channel.
 		RemoveFromTable( Me.chat_queue, Me.channels_busy[channel] )
 		Me.ChatConfirmed( channel )
 	end
@@ -1385,12 +1428,6 @@ function Me.TryConfirm( kind, guid )
 	-- See if we received a message of the type that we sent.
 	if cq.type ~= kind then return end
 	
-	-- It'd be better if we could verify the message contents, to make sure
-	--  that we caught the right event, but lots of things can change the 
-	--  resulting message, especially on the server side (for example, if
-	--  you're drunk, or if you send %t which gets replaced by your target).
-	-- So... we just do it blind, instead. If we send two SAY messages and
-	--  and EMOTE in order, then we wait for two SAY events and one EMOTE
 	if guid == PLAYER_GUID then -- event for confirmation.
 		Me.ChatConfirmed()
 	end]]
@@ -1461,7 +1498,7 @@ function Me.OnChatMsgSystem( event, message, sender, _, _, target )
 	-- We're just looking out in here for throttle errors.
 	--if #Me.chat_queue == 0 then -- If the queue isn't started, then we aren't
 		                        -- expecting anything.
-	if not Me.channels_busy[CHANNEL_SAY] and not Me.channels_busy[CHANNEL_BNET] then
+	if not Me.channels_busy[CHANNEL_SAY] then
 		return
 	end
 	
@@ -1524,6 +1561,7 @@ function Me.OnClubError( event, action, error, club_type )
 	end
 end
 
+-------------------------------------------------------------------------------
 function Me.OnChatMsgBnOffline( event, ... )
 	local c = Me.channels_busy[CHANNEL_BNET]
 	if not c then
@@ -1570,12 +1608,10 @@ function Me.OnChatMsgGuildOfficer( event, _,_,_,_,_,_,_,_,_,_,_, guid )
 		-- confirmed this channel
 		event = event:sub( 10 )
 		
-		if cq.type == event then
+		if (cq.type == event) 
+		   or (cq.type == "CLUB" and cq.arg3 == GetGuildClub()) then
 			RemoveFromTable( Me.chat_queue, cq )
-			Me.ChatConfirmed( channel )
-		elseif cq.type == "CLUB" and cq.arg3 == GetGuildClub() then
-			RemoveFromTable( Me.chat_queue, cq )
-			Me.ChatConfirmed( channel )
+			Me.ChatConfirmed( CHANNEL_CLUB )
 		end
 	end
 	--[[

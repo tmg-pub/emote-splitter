@@ -56,7 +56,7 @@ local _, Me = ...
 --  we don't waste much time being very exact with our calculations.
 -- BURST is how much bandwidth we can store if there is a period of inactivity.
 local THROTTLE_BPS   = 1000
-local THROTTLE_BURST = 3500
+local THROTTLE_BURST = 2000
 local TIMER_PERIOD   = 0.25
 local MSG_OVERHEAD   = 25
 -------------------------------------------------------------------------------
@@ -82,6 +82,14 @@ Me.out_chat_buffer = {}
 --  basically just a flag so we don't call OnThrottlerStart multiple times.
 Me.send_queue_started = false
 Me.throttler_started  = false
+
+local function MaxBandwidth()
+	if InCombatLockdown() then
+		return THROTTLE_BURST/2
+	else
+		return THROTTLE_BURST
+	end
+end
 
 -------------------------------------------------------------------------------
 -- Check the time and add to our bandwidth pool.
@@ -122,8 +130,12 @@ local function TryDispatchMessage( msg )
 	--  message to make it use more bytes of bandwidth; things like channel
 	--  name, chat type, club id, etc.
 	local size = (#msg.msg + MSG_OVERHEAD)
-	if size > Me.bandwidth then 
+	if size > Me.bandwidth and Me.bandwidth < (MaxBandwidth() - 50) then 
 		-- Not enough bandwidth.
+		-- Note that this still goes through if bandwidth is insufficient if
+		--  we're near the peak BURST. This is to account for sending
+		--  max-length messages (4000 bytes) when our burst is only 2000
+		--  or 1000.
 		return false
 	end
 	
@@ -243,4 +255,14 @@ end
 function Me.CommitChat( msg )
 	table.insert( Me.out_chat_buffer, msg )
 	StartSendQueue()
+end
+
+-------------------------------------------------------------------------------
+-- Returns what % of bandwidth is currently available.
+--
+-- Note, that when InCombatLockdown() this will return a max of 50.
+--
+function Me.ThrottlerHealth()
+	UpdateBandwidth()
+	return math.ceil(Me.bandwidth / THROTTLE_BURST * 100)
 end
