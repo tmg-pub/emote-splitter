@@ -1,5 +1,9 @@
-## 1.4.2
+## 1.4.3
 Core API changes for Cross RP.
+
+
+## 1.4.2
+Fixed Tongues compatibility with Battle.net whispers.
 
 
 ## 1.4.1

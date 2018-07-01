@@ -1,7 +1,7 @@
 #------------------------------------------------------------------------------
 ## Interface: 70300
 ## Title: Emote Splitter
-## Version: 1.4.2
+## Version: 1.4.3
 ## Notes: Unlocks chatbox and splits long emotes.
 ## Author: Tammya-MoonGuard
 ## OptionalDeps: UnlimitedChatMessage, Misspelled, Tongues
