@@ -164,15 +164,6 @@ local FAILURE_LIMIT = 5                        --
 local CHAT_TIMEOUT = 10.0                          -- community messages.
 local CHAT_THROTTLE_WAIT = 3.0
 -------------------------------------------------------------------------------
--- We need to get a little bit creative when determining whether or not
--- something is an organic call to the WoW API or if we're coming from our own
--- system. For normal chat messages, we hide a little flag in the channel
--- argument ("#ES"); for Battle.net whispers, we hide this flag as an offset
--- to the presenceID. If the presenceID is >= this constant, then we're in the
-local BNET_FLAG_OFFSET = 100000 -- throttler's message loop. Otherwise, we're
-                                -- handling an organic call.
-
--------------------------------------------------------------------------------
 -- Normally this isn't touched. This was a special request from someone who
 --  was having trouble using the stupid addon Tongues. Basically, this is used
 --  to limit how much text can be sent in a single message, so then Tongues can
@@ -849,7 +840,8 @@ function Me.ProcessIncomingChat( msg, chat_type, arg3, target, hook_start )
 				
 			if chunk_msg then
 				Me.QueueChat( chunk_msg, chunk_type, chunk_arg3, chunk_target )
-				Me.ExecuteHooks( "POSTQUEUE", chunk_msg, chunk_type, chunk_arg3, chunk_target )
+				Me.ExecuteHooks( "POSTQUEUE", chunk_msg, chunk_type, 
+				                                     chunk_arg3, chunk_target )
 			end
 		end
 	end
