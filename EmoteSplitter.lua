@@ -553,7 +553,6 @@ end
 -- main ProcessIncomingChat function.
 --
 function Me.SendChatMessageHook( msg, chat_type, language, channel )
-	print( msg, "-", chat_type, "-", language, "-", channel )
 	Me.ProcessIncomingChat( msg, chat_type, language, channel )
 end
 
