@@ -725,7 +725,6 @@ function Me.ProcessIncomingChat( msg, chat_type, arg3, target, hook_start )
 		for i = 1, #chunks do
 			local chunk_msg, chunk_type, chunk_arg3, chunk_target =
 				Me.ExecuteHooks( "QUEUE", chunks[i], chat_type, arg3, target )
-				print('sending')
 			if chunk_msg then
 				Me.QueueChat( chunk_msg, chunk_type, chunk_arg3, chunk_target )
 				Me.ExecuteHooks( "POSTQUEUE", chunk_msg, chunk_type, chunk_arg3, chunk_target )
