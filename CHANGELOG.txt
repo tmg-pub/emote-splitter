@@ -1,3 +1,7 @@
+## 1.4.2
+Fixed Tongues compatibility with Battle.net whispers.
+
+
 ## 1.4.1
 Sorry about that, the last release was broken during packaging.
 

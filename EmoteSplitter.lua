@@ -1532,8 +1532,28 @@ function Me.TonguesCompatibility()
 		Me.SendChatFromHook( ... )
 	end
 	
+	local tongues_accepted_types = {
+		SAY           = true;
+		EMOTE         = true;
+		YELL          = true;
+		PARTY         = true;
+		GUILD         = true;
+		OFFICER       = true;
+		RAID          = true;
+		RAID_WARNING  = true;
+		INSTANCE_CHAT = true;
+		BATTLEGROUND  = true;
+		WHISPER       = true;
+		CHANNEL       = true;
+	}
+	
 	Me.AddChatHook( "START", function( msg, type, _, target )
-		if tongues_is_calling_send then 
+		if not tongues_accepted_types[type:upper()] then
+			-- Don't send any special types through tongues.
+			return
+		end
+		
+		if tongues_is_calling_send then
 			-- If Tongues is calling this, then we just skip our filter.
 			return
 		end
