@@ -556,11 +556,23 @@ function Me.Suppress()
 end
 
 -------------------------------------------------------------------------------
+-- This lets you pause the chat queue so you can load it up with messages
+--  first, mainly for you to insert different priorities without the lower ones
+--  firing before you're done feeding the queue.
+--
+function Me.PauseQueue()
+	Me.pause_queue = true
+end
+
+-------------------------------------------------------------------------------
 -- This is a feature added mainly for Cross RP, to keep the text protocol's
 --  traffic away from clogging chat text from going through. Higher numbers are
 --  always sent after lower priority numbers. (1 is highest priority)
 function Me.SetTrafficPriority( priority )
 	Me.traffic_priority = priority
+end
+function Me.GetTrafficPriority()
+	return Me.traffic_priority
 end
 
 -------------------------------------------------------------------------------
@@ -1162,7 +1174,12 @@ function Me.QueueChat( msg, type, arg3, target )
 		end
 		
 		ChatQueueInsert( msg_pack )
-		Me.StartChat()
+		
+		if Me.queue_paused then
+			Me.queue_paused = false
+			return
+		end
+		Me.StartQueue()
 		
 	else -- For other message types like party, raid, whispers, channels, we
 		 -- aren't going to be affected by the server throttler, so we go
@@ -1201,7 +1218,7 @@ end
 -------------------------------------------------------------------------------
 -- Execute the chat queue.
 --
-function Me.StartChat()
+function Me.StartQueue()
 	-- It's safe to call this function whenever for whatever. If the queue is
 	--  already started, or if the queue is empty, it does nothing.
 --	if Me.chat_busy then return end
@@ -1239,14 +1256,10 @@ function Me.ChatQueueNext()
 	while i <= #Me.chat_queue do
 		local q = Me.chat_queue[i]
 		if q.type == "BREAK" then
-			print( "DEBUG - FOUND BREAK, HEALTH", Me.ThrottlerHealth() )
 			if Me.AnyChannelsBusy() then
-				print( "DEBUG - FOUND BREAK - CHANNELS BUSY" )
 				break
 			else
-				
 				if Me.ThrottlerHealth() < 25 then
-					print( "DEBUG - FOUND BREAK - THROTTLE WAIT" )
 					Me.Timer_Start( "throttle_break", "ignore", 0.1, Me.ChatQueueNext )
 					return
 				end
