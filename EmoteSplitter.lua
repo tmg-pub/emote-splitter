@@ -637,6 +637,8 @@ end
 --  newlines, then this is going to just return { text }.
 --                               --
 function Me.SplitLines( text )   --
+	-- We still want to send empty messages for AFK, DND, etc.
+	if text == "" then return {""} end
 	-- We merge "\n" into LF too. This might seem a little bit unwieldy, right?
 	-- Like, you're wondering what if the user pastes something
 	--  like C:\nothing\etc... into their chatbox to send to someone. It'll be
@@ -665,6 +667,7 @@ end
 -- main ProcessIncomingChat function.
 --
 function Me.SendChatMessageHook( msg, chat_type, language, channel )
+	print( msg, "-", chat_type, "-", language, "-", channel )
 	Me.ProcessIncomingChat( msg, chat_type, language, channel )
 end
 
@@ -837,7 +840,7 @@ function Me.ProcessIncomingChat( msg, chat_type, arg3, target, hook_start )
 		for i = 1, #chunks do
 			local chunk_msg, chunk_type, chunk_arg3, chunk_target =
 				Me.ExecuteHooks( "QUEUE", chunks[i], chat_type, arg3, target )
-				
+				print('sending')
 			if chunk_msg then
 				Me.QueueChat( chunk_msg, chunk_type, chunk_arg3, chunk_target )
 				Me.ExecuteHooks( "POSTQUEUE", chunk_msg, chunk_type, 
