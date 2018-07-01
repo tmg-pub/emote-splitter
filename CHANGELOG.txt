@@ -2,7 +2,7 @@
 Core API changes for Cross RP.
 
 
-## 1.4.2.1
+## 1.4.2.2
 Fix for AFK/DND.
 
 
