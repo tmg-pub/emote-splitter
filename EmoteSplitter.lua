@@ -778,7 +778,8 @@ function Me.ProcessIncomingChat( msg, chat_type, arg3, target, hook_start )
 		if channel_name then
 			-- GetChannelName returns a specific string for club channels:
 			--   Community:<club ID>:<stream ID>
-			local club_id, stream_id = channel_name:match( "Community:(%d+):(%d+)" )
+			local club_id, stream_id = 
+			                      channel_name:match( "Community:(%d+):(%d+)" )
 			if club_id then
 				-- This is a community message, reroute this message to use
 				--  C_Club directly...
@@ -801,8 +802,8 @@ function Me.ProcessIncomingChat( msg, chat_type, arg3, target, hook_start )
 									or Enum.ClubStreamType.Officer )
 			if not club_id then
 				-- The client right now doesn't actually print this message, so
-				--  we're helping it out a little bit. If it does start printing
-				--  it on its own, then remove this.
+				--  we're helping it out a little bit. If it does start
+				--  printing it on its own, then remove this.
 				local info = ChatTypeInfo["SYSTEM"];
 				DEFAULT_CHAT_FRAME:AddMessage( ERR_GUILD_PLAYER_NOT_IN_GUILD, 
 				                               info.r, info.g, info.b, 
@@ -1253,7 +1254,8 @@ function Me.ChatQueueNext()
 				break
 			else
 				if Me.ThrottlerHealth() < 25 then
-					Me.Timer_Start( "throttle_break", "ignore", 0.1, Me.ChatQueueNext )
+					Me.Timer_Start( "throttle_break", "ignore", 0.1, 
+					                                         Me.ChatQueueNext )
 					return
 				end
 				table.remove( Me.chat_queue, i )
@@ -1261,7 +1263,8 @@ function Me.ChatQueueNext()
 		else
 			local channel = QUEUED_TYPES[q.type]
 			if not Me.channels_busy[channel] then
-				Me.Timer_Start( "channel_"..channel, "push", CHAT_TIMEOUT, Me.ChatDeath, channel )
+				Me.Timer_Start( "channel_"..channel, "push", CHAT_TIMEOUT, 
+				                                        Me.ChatDeath, channel )
 				Me.CommitChat( q )
 				Me.channels_busy[channel] = q
 				if Me.AllChannelsBusy() then
@@ -1291,13 +1294,10 @@ function Me.ChatQueueNext()
 	-- (2) The server throttles us, and we get an error. We intercept that
 	--  error, wait a little bit, and then retry sending this message. This
 	--  step can repeat indefinitely, but usually only happens once or twice.
-	-- (3) The chat timer below times out before we get any sort of response.
+	-- (3) The chat timer times out before we get any sort of response.
 	--  This happens under heavy latency or when something prevents our
-	--  message from being sent (and we don't know it). One known case of that
-	--  is sending a BNet message to an offline player. It's difficult to 
---	local c = Me.chat_queue[1]              -- intercept that sort of failure.
---	Me.SetChatTimer( Me.ChatDeath, CHAT_TIMEOUT ) 
---	Me.CommitChat( c )
+	--  message from being sent (and we don't know it). We want to do a hard
+	--  reset in that case so we don't get stuck in a failed state.
 end
 
 -------------------------------------------------------------------------------
@@ -1321,21 +1321,16 @@ end
 -- These two functions are called from our event handlers. 
 -- This one is called when we confirm a message was sent. The other is called
 --                            when we see we've gotten a "throttled" error.
--- The `dont_remove` argument means that we have modified the chat_queue
---  outside, and shouldn't do table.remove in here.
 function Me.ChatConfirmed( channel )
 	
 	Me.StopLatencyRecording()
 	Me.failures = 0
 	Me.channels_busy[channel] = nil
-	Me.Timer_Cancel( "channel_"..channel )
 	
 	-- Cancelling either the main 10-second timeout, or the throttled warning
 	--  timeout (see below).
---	Me.StopChatTimer()               -- Upon success, we just pop the chat
---	if not dont_remove then          --  queue and continue as normal.
---		table.remove( Me.chat_queue, 1 )
---	end
+	Me.Timer_Cancel( "channel_"..channel )
+	
 	Me.ChatQueueNext()
 end
 
@@ -1371,10 +1366,12 @@ function Me.ChatFailed( channel )                         --  message.
 	if channel == CHANNEL_CLUB then -- CLUB channels
 		wait_time = CHAT_THROTTLE_WAIT
 	else
-		wait_time = math.min( 10, math.max( 1.5 + Me.GetLatency(), CHAT_THROTTLE_WAIT ))
+		wait_time = math.min( 10, math.max( 1.5 + Me.GetLatency(),
+		                                                  CHAT_THROTTLE_WAIT ))
 	end
 	
-	Me.Timer_Start( "channel_"..channel, "push", wait_time, Me.ChatFailedRetry, channel )
+	Me.Timer_Start( "channel_"..channel, "push", wait_time,
+	                                              Me.ChatFailedRetry, channel )
 	Me.SendingText_ShowFailed()  -- We also update our little indicator to show
 end                              --  this.
 
@@ -1420,23 +1417,11 @@ function Me.TryConfirm( kind, guid )
 	-- So... we just do it blind, instead. If we send two SAY messages and
 	--  and EMOTE in order, then we wait for two SAY events and one EMOTE
 	if Me.channels_busy[channel] and kind == Me.channels_busy[channel].type 
-						                       and guid == PLAYER_GUID then
+						                           and guid == PLAYER_GUID then
 		-- Confirmed this channel.
 		RemoveFromTable( Me.chat_queue, Me.channels_busy[channel] )
 		Me.ChatConfirmed( channel )
 	end
-	
-	--[[
-	local cq = Me.chat_queue[1]
-	if not cq then return end   -- The chat queue is empty. Maybe we should
-	                            -- also break out of here if chat_busy is 
-								-- false?
-	-- See if we received a message of the type that we sent.
-	if cq.type ~= kind then return end
-	
-	if guid == PLAYER_GUID then -- event for confirmation.
-		Me.ChatConfirmed()
-	end]]
 end
 
 -------------------------------------------------------------------------------
@@ -1609,37 +1594,25 @@ end
 -- Our hook for CHAT_MSG_GUILD and CHAT_MSG_OFFICER.
 --
 function Me.OnChatMsgGuildOfficer( event, _,_,_,_,_,_,_,_,_,_,_, guid )
+
+	-- These are a fun couple of events, and very messy to deal with. Maybe the
+	--  API might get some improvements in the future, but as of right now
+	--  these show up without any sort of data what club channel they're coming
+	--  from. We just sort of gloss over everything.
+	
 	local cq = Me.channels_busy[CHANNEL_CLUB]
 	if cq and guid == PLAYER_GUID then
 		-- confirmed this channel
 		event = event:sub( 10 )
 		
+		-- Typically cq.type will always be CLUB for these, but we handle this
+		--  anyway.
 		if (cq.type == event) 
 		   or (cq.type == "CLUB" and cq.arg3 == GetGuildClub()) then
 			RemoveFromTable( Me.chat_queue, cq )
 			Me.ChatConfirmed( CHANNEL_CLUB )
 		end
 	end
-	--[[
-	-- These are a fun couple of events, and very messy to deal with. Maybe the
-	--  API might get some improvements in the future, but as of right now
-	--  these show up without any sort of data what club channel they're coming
-	--  from. We just sort of gloss over everything.
-	local cq = Me.chat_queue[1]
-	if not cq then return end
-	
-	if guid ~= PLAYER_GUID then return end
-	event = event:sub( 10 )
-	
-	-- Typically cq.type will always be CLUB for these, but we handle this
-	--  anyway.
-	if cq.type == event then
-		Me.ChatConfirmed()
-	elseif cq.type == "CLUB" and cq.arg3 == GetGuildClub() then
-		-- arg3 is the club ID, and if it's the guild club, then our CLUB
-		--  message is indeed expecting OFFICER or GUILD chat type.
-		Me.ChatConfirmed()
-	end ]]
 end
 
 -------------------------------------------------------------------------------
