@@ -422,7 +422,7 @@ function Me.AddChatFromStartEvent( msg, chat_type, arg3, target )
 	local filter_index = 0
 	local filter = Me.hook_stack[#Me.hook_stack]
 	if filter then
-		for k,v in pairs( Me.chat_hooks["CHAT_NEW"] ) do
+		for k,v in pairs( Me.event_hooks["CHAT_NEW"] ) do
 			if v == filter then
 				filter_index = k
 				break
@@ -546,14 +546,28 @@ function Me.SetTempChunkSize( chunk_size )
 	Me.next_chunk_size = chunk_size
 end
 
+local function FalseIsNil( value )
+	if value == false then
+		return nil
+	else
+		return value
+	end
+end
+
 -------------------------------------------------------------------------------
 function Me.SetSplitmarks( pre, post, sticky )
-	if sticky then
-		if pre ~= false then Me.splitmark_start = pre end
-		if post ~= false then Me.splitmark_end = post end
-	else
-		if pre ~= false then Me.splitmark_end_temp = pre end
-		if post ~= false then Me.splitmark_start_temp = post end
+	local key_pre, key_post = "splitmark_start", "splitmark_end"
+	if not sticky then
+		key_pre = key_pre .. "_temp"
+		key_post = key_post .. "_temp"
+	end
+	
+	if pre ~= nil then
+		Me[key_pre] = FalseIsNil( pre )
+	end
+	
+	if post ~= nil then
+		Me[key_post] = FalseIsNil( post )
 	end
 end
 
@@ -568,8 +582,13 @@ end
 
 -------------------------------------------------------------------------------
 function Me.SetPadding( prefix, suffix )
-	if prefix ~= false then Me.chunk_prefix = prefix end
-	if suffix ~= false then Me.chunk_suffix = suffix end
+	if prefix ~= nil then
+		Me.chunk_prefix = FalseIsNil( prefix )
+	end
+	
+	if suffix ~= nil then
+		Me.chunk_suffix = FalseIsNil( suffix )
+	end
 end
 
 -------------------------------------------------------------------------------
@@ -869,11 +888,11 @@ Me.chat_replacement_patterns = {
 function Me.SplitMessage( text, chunk_size, splitmark_start, splitmark_end,
                                                    chunk_prefix, chunk_suffix )
 	chunk_size      = chunk_size or Me.default_chunk_sizes.OTHER
-	chunk_prefix    = chunk_prefix or ""
-	chunk_suffix    = chunk_suffix or ""
-	splitmark_start = splitmark_start or Me.splitmark_start_temp 
+	chunk_prefix    = chunk_prefix or Me.chunk_prefix or ""
+	chunk_suffix    = chunk_suffix or Me.chunk_suffix or ""
+	splitmark_start = splitmark_start or Me.splitmark_start_temp
 	                                                or Me.splitmark_start or ""
-	splitmark_end   = splitmark_end or Me.splitmark_end_temp 
+	splitmark_end   = splitmark_end or Me.splitmark_end_temp
 	                                                  or Me.splitmark_end or ""
 	local pad_len   = chunk_prefix:len() + chunk_suffix:len()
 	
@@ -984,7 +1003,7 @@ function Me.SplitMessage( text, chunk_size, splitmark_start, splitmark_end,
 					
 					-- If we reach halfway through the text without finding a
 					--  valid character to split at, then there is some clear 
-					--  abuse going on. (Actually, we should have found one in 
+					--  abuse going on. (Actually, we should have found one in
 					if i <= 128 then  -- the first few bytes.)
 						return {""}   -- In this case, we just obliterate
 					end               --  whatever nonsense we were fed.
@@ -1284,8 +1303,6 @@ function Me.ChatFailed( channel )                         --  message.
 	
 	Me.FireEvent( "SEND_FAIL", unpack(Me.channels_busy[channel]) )
 	
-	Me.channels_busy[channel] = nil
-	
 	-- With the 8.0 update, Emote Splitter also supports communities, which
 	--  give a more clear signal that the chat failed that's purely from
 	--  the throttler, so we don't account for latency.
@@ -1299,15 +1316,14 @@ function Me.ChatFailed( channel )                         --  message.
 	
 	Me.Timer_Start( "gopher_channel_"..channel, "push", wait_time,
 	                                              Me.ChatFailedRetry, channel )
-	print( "DEBUG CHATFAIL" )
 end                          
 
 -------------------------------------------------------------------------------
 -- For restarting the chat queue after a failure.
 --
-function Me.ChatFailedRetry()
-	Me.FireEvent( "SEND_RECOVER" )
-	
+function Me.ChatFailedRetry( channel )
+	Me.FireEvent( "SEND_RECOVER", unpack(Me.channels_busy[channel]) )
+	Me.channels_busy[channel] = nil
 	Me.ChatQueueNext()
 end
 
@@ -1342,7 +1358,6 @@ function Me.TryConfirm( kind, guid )
 		-- Confirmed this channel.
 		RemoveFromTable( Me.chat_queue, Me.channels_busy[channel] )
 		Me.ChatConfirmed( channel )
-		print( "DEBUG CHATCONFIRM" )
 	end
 end
 

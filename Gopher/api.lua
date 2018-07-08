@@ -293,9 +293,9 @@ Gopher.SetTempChunkSize = Internal.SetTempChunkSize
 -- end: Text to append to chunks that are continued in the next one.
 -- sticky: If true, this will persist for  all future messages. If false,  this
 --          call will only apply to the next chat message.
--- Pass `false` to start or end to ignore the value. `nil` removes the setting.
---  You need to  pass "" to start or end to override  the  sticky setting  with
---  "nothing"--not nil.
+-- Pass `nil` to start or end to ignore the value. Pass  `false` to remove  the
+--  setting.
+--
 Gopher.SetSplitmarks = Internal.SetSplitmarks
 Gopher.GetSplitmarks = Internal.GetSplitmarks
 
@@ -308,6 +308,7 @@ Gopher.GetSplitmarks = Internal.GetSplitmarks
 --  message, all of the chunks will start with "|| ".
 --
 -- This applies to the next chat message only, and you don't need to reset it.
+-- If you do want to reset it, pass `false`, `nil` makes the argument ignored.
 --
 Gopher.SetPadding = Internal.SetPadding
 Gopher.GetPadding = Internal.GetPadding

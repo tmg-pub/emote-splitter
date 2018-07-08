@@ -118,6 +118,7 @@ function Me:OnEnable()
 	Gopher.Listen( "SEND_DONE",       Me.Gopher_SEND_DONE       )
 	Gopher.Listen( "SEND_DEATH",      Me.Gopher_SEND_DEATH      )
 	Gopher.Listen( "SEND_FAIL",       Me.Gopher_SEND_FAIL       )
+	Gopher.Listen( "SEND_CONFIRMED",  Me.Gopher_SEND_CONFIRMED  )
 	Gopher.Listen( "SEND_RECOVER",    Me.Gopher_SEND_RECOVER    )
 	Gopher.Listen( "THROTTLER_START", Me.Gopher_THROTTLER_START )
 	Gopher.Listen( "THROTTLER_STOP",  Me.Gopher_THROTTLER_STOP  )
@@ -233,6 +234,10 @@ end
 -------------------------------------------------------------------------------
 function Me.Gopher_SEND_FAIL()
 	Me.SendingText_ShowFailed()  -- We also update our little indicator to show
+end
+-------------------------------------------------------------------------------
+function Me.Gopher_SEND_CONFIRMED()
+	Me.SendingText_ShowSending()
 end
 
 -------------------------------------------------------------------------------
