@@ -146,16 +146,19 @@ Me.event_hooks = {    -- functions.
 	SEND_START     = {};
 	
 	-- SEND_FAIL is when the chat system detects a throttle failure or such,
-	--  and will be working to recover or re-send.
+	--  and will be working to recover or re-send. RESUME is triggered when
+	--  it retries.
 	SEND_FAIL      = {};
+	SEND_RESUME    = {};
 	
 	-- SEND_DEATH is when the chat system timed out and a hard reset is done 
 	--  to recover.
 	SEND_DEATH     = {};
 	
-	-- SEND_DEQUEUED is when the chat system has successfully sent and verified
-	--  a message. The callback arguments will contain the message sent.
-	SEND_DEQUEUED    = {};
+	-- SEND_CONFIRMED is when the chat system has successfully sent and
+	--  confirmed a message. The callback arguments will contain the message 
+	--  sent.
+	SEND_CONFIRMED = {};
 	
 	-- SEND_DONE is when the chat system has emptied its queue and goes back
 	--  to being idle.
@@ -1117,13 +1120,13 @@ end
 			
 -------------------------------------------------------------------------------
 local QUEUED_TYPES = { -- These are the types that aren't passed directly to
-	SAY     = CHANNEL_SAY; --  the throttler for output. They're queued and sent
-	EMOTE   = CHANNEL_SAY; --  one at a time, so that we can verify if they went
-	YELL    = CHANNEL_SAY; --  through or not.
-	BNET    = CHANNEL_SAY;     
-	GUILD   = CHANNEL_CLUB; -- We handle GUILD and OFFICER like this too since
-	OFFICER = CHANNEL_CLUB; --  they're also treated like club channels in 8.0.
-	CLUB    = CHANNEL_CLUB; -- Essentially, anything that can fail from throttle
+	SAY     = 1; --  the throttler for output. They're queued and sent
+	EMOTE   = 1; --  one at a time, so that we can verify if they went
+	YELL    = 1; --  through or not.
+	BNET    = 1;     
+	GUILD   = 2; -- We handle GUILD and OFFICER like this too since
+	OFFICER = 2; --  they're also treated like club channels in 8.0.
+	CLUB    = 2; -- Essentially, anything that can fail from throttle
 }                      --  or other issues should be put in here.
 -- In 1.4.2 we also have a few different queue types to send traffic with
 --  different handlers at the same time.
@@ -1248,8 +1251,10 @@ function Me.ChatQueueNext()
 		return
 	end
 	
-	Me.sending_active = true
-	Me.FireEvent( "SEND_START" )
+	if not Me.sending_active then
+		Me.sending_active = true
+		Me.FireEvent( "SEND_START" )
+	end
 	-- Otherwise, we're gonna send another message. 
 	--*Me.SendingText_ShowSending()
 	
@@ -1261,7 +1266,7 @@ function Me.ChatQueueNext()
 				break
 			else
 				if Me.ThrottlerHealth() < 25 then
-					Me.Timer_Start( "throttle_break", "ignore", 0.1, 
+					Me.Timer_Start( "gopher_throttle_break", "ignore", 0.1, 
 					                                         Me.ChatQueueNext )
 					return
 				end
@@ -1270,7 +1275,7 @@ function Me.ChatQueueNext()
 		else
 			local channel = QUEUED_TYPES[q.type]
 			if not Me.channels_busy[channel] then
-				Me.Timer_Start( "channel_"..channel, "push", CHAT_TIMEOUT, 
+				Me.Timer_Start( "gopher_channel_"..channel, "push", CHAT_TIMEOUT, 
 				                                        Me.ChatDeath, channel )
 				Me.CommitChat( q )
 				Me.channels_busy[channel] = q
@@ -1282,14 +1287,11 @@ function Me.ChatQueueNext()
 		end
 	end
 	
-	if not Me.AnyChannelsBusy() then
-		--@debug@
-		if #Me.chat_queue ~= 0 then
-			error( "Chat queue not empty when returning from ChatQueueNext" )
-		end
-		--@end-debug@
-		Me.SendingText_Hide()
+	if not Me.AnyChannelsBusy() and Me.sending_active then
+		Me.FireEvent( "SEND_DONE" )
+		--*Me.SendingText_Hide()
 		Me.failures = 0
+		Me.sending_active = false
 	end
 	
 	-- We fetch the first entry in the chat queue and then "commit" it. Once
@@ -1307,7 +1309,428 @@ function Me.ChatQueueNext()
 	--  reset in that case so we don't get stuck in a failed state.
 end
 
+-------------------------------------------------------------------------------
+-- Timer callback for when chat times out.
+-- This is a fatal error due to timeout. At this point, we've waited extremely
+--  long for a message. Something went wrong or the user is suffering from
+--  intense latency. We just want to reset completely to recover.
+function Me.ChatDeath() 
+	Me.FireEvent( "SEND_DEATH", Me.chat_queue )
+	--*Me.SendingText_Hide()
+	wipe( Me.chat_queue )
+	Me.sending_active = false
+	for i = 1, MY_NUM_CHANNELS do
+		Me.channels_busy[i] = nil
+	end
+	
+	-- I feel like we should wrap these types of print calls in something to
+	--  standardize the formatting and such.
+	--*print( "|cffff0000<" .. L["Chat failed!"] .. ">|r" )
+end
+
+-------------------------------------------------------------------------------
+-- These two functions are called from our event handlers. 
+-- This one is called when we confirm a message was sent. The other is called
+--                            when we see we've gotten a "throttled" error.
+function Me.ChatConfirmed( channel, skip_event )
+	Me.StopLatencyRecording()
+	Me.failures = 0
+	
+	if not skip_event then
+		Me.FireEvent( "SEND_CONFIRMED", unpack(Me.channels_busy[channel]) )
+	end
+	Me.channels_busy[channel] = nil
+	
+	-- Cancelling either the main 10-second timeout, or the throttled warning
+	--  timeout (see below).
+	Me.Timer_Cancel( "gopher_channel_"..channel )
+	
+	Me.ChatQueueNext()
+end
+
+-------------------------------------------------------------------------------
+-- Upon failure, we wait a little while, and then retry sending the same
+function Me.ChatFailed( channel )                         --  message.
+	-- A bit of a random formula here... When ChatFailed is called, we don't
+	--  actually know if the chat failed or not quite yet. You can get the
+	--  throttle error as a pure warning, and the chat message will still go
+	--  through. There can be a large gap between the chat event and that
+	--  though, so we need to wait to see if we get the chat message still.
+	-- The amount of time we wait is at least CHAT_THROTTLE_WAIT (3) seconds, 
+	--  or more if they have high latency, a maximum of ten seconds. This might 
+	--  be a bother to  people who get a lag spike though, so maybe we should 
+	--  limit this to be less? They DID get the chat throttled message after
+	--  all.
+	
+	-- We don't want to get stuck waiting forever if this error /isn't/ caused
+	--  by some sort of throttle, so we count the errors and die after waiting
+	--  for so many.
+	Me.failures = Me.failures + 1
+	if Me.failures >= FAILURE_LIMIT then
+		Me.ChatDeath()
+		return
+	end
+	
+	Me.FireEvent( "SEND_FAIL", unpack(Me.channels_busy[channel]) )
+	--*Me.SendingText_ShowFailed()  -- We also update our little indicator to show
+	
+	Me.channels_busy[channel] = nil
+	
+	-- With the 8.0 update, Emote Splitter also supports communities, which
+	--  give a more clear signal that the chat failed that's purely from
+	--  the throttler, so we don't account for latency.
+	local wait_time
+	if channel == 2 then -- CLUB channels
+		wait_time = CHAT_THROTTLE_WAIT
+	else
+		wait_time = math.min( 10, math.max( 1.5 + Me.GetLatency(),
+		                                                  CHAT_THROTTLE_WAIT ))
+	end
+	
+	Me.Timer_Start( "gopher_channel_"..channel, "push", wait_time,
+	                                              Me.ChatFailedRetry, channel )
+end                          
+
+-------------------------------------------------------------------------------
+-- For restarting the chat queue after a failure.
+--
+function Me.ChatFailedRetry()
+	-- We have an option to hide any sort of failure messages during
+	--  semi-normal operation. If that's disabled, then we tell the user when
+	--  we're resending their message. Otherwise, it's a seamless operation.
+--	if not Me.db.global.hidefailed then -- All errors are hidden and everything
+--		                                -- happens in the background.
+--*		print( "|cffff00ff<" .. L["Resending..."] .. ">" )
+--	end
+	
+	Me.FireEvent( "SEND_RECOVER" )
+	
+	Me.ChatQueueNext()
+end
+
+local function RemoveFromTable( target, value )
+	for k, v in ipairs( target ) do
+		if v == value then
+			table.remove( target, k )
+			return
+		end
+	end
+end
+
+-------------------------------------------------------------------------------
+-- This is called by our chat events, to try and confirm messages that have
+-- been commit from our queue.
+--
+-- kind: Type of chat message the event handles. e.g. SAY, EMOTE, etc.
+-- guid: GUID of the player that sent the message.
+--
+function Me.TryConfirm( kind, guid )
+	local channel = QUEUED_TYPES[kind]
+	if not channel then return end
+	
+	-- It'd be better if we could verify the message contents, to make sure
+	--  that we caught the right event, but lots of things can change the 
+	--  resulting message, especially on the server side (for example, if
+	--  you're drunk, or if you send %t which gets replaced by your target).
+	-- So... we just do it blind, instead. If we send two SAY messages and
+	--  and EMOTE in order, then we wait for two SAY events and one EMOTE
+	if Me.channels_busy[channel] and kind == Me.channels_busy[channel].type 
+						                        and guid == Me.PLAYER_GUID then
+		-- Confirmed this channel.
+		RemoveFromTable( Me.chat_queue, Me.channels_busy[channel] )
+		Me.ChatConfirmed( channel )
+	end
+end
+
+-------------------------------------------------------------------------------
+-- We measure the time from when a message is sent, to the time we receive
+--                                   -- a server event that corresponds to
+function Me.StartLatencyRecording()  --  that message.
+	Me.latency_recording = GetTime()
+end
+
+-------------------------------------------------------------------------------
+-- When we have that value, the length between the event and the start, then
+--  we don't quite set our latency value directly unless it's higher. If it's
+--  higher, then there's likely some sort of latency spike, and we can
+--  probably expect another one soonish. If it's lower, then we ease the
+function Me.StopLatencyRecording()           -- latency value towards it
+	if not Me.latency_recording then return end      -- (only use 25%).
+	
+	local time = GetTime() - Me.latency_recording
+	
+	-- Of course we do assume that something is quite wrong if we have a
+	--  value greater than 10 seconds. Things like this have their pros and
+	--  cons though. This might open up room for logical errors, where,
+	--  normally, the code would break, because somewhere along the line we
+	--  had a huge value of minutes or hours. Clamping it like this eliminates
+	--  the visibility of such a bug. The pro of this, though? The user at
+	--  least won't experience that problem. I think our logic is pretty solid
+	time = math.min( time, 10 )                                    -- though.
+	if time > Me.latency then
+		Me.latency = time
+	else
+		-- I use this interpolation pattern a lot. A * x + B * (1-x). If you
+		--  want to be super efficient, you can also do A + (B-A) * x. Things
+		--  like that are more important when you're dealing with archaic
+		--  system where multiplies are quite a bit more expensive than
+		Me.latency = Me.latency * 0.80 + time * 0.20       -- addition.
+		
+		-- It's a bit sad how everything you program for these days has tons
+		--  of power.
+	end
+	
+	-- This value is either a time (game time), or nil. If it's nil, then the
+	--  recording isn't active.
+	Me.latency_recording = nil
+end
+
+-------------------------------------------------------------------------------
+-- Read the last latency value, with some checks.
+--
+function Me.GetLatency()
+	local _, _, latency_home = GetNetStats()
+	
+	-- The game's latency recording is still decent enough for a floor value.
+	-- And our ceiling is 10 seconds. Anything higher than that, and you're
+	--  probably going to be seeing a lot of other timeout problems...
+	local latency = math.max( Me.latency, latency_home/1000 ) 
+	latency = math.min( latency, 10.0 )     --        ^^^^^
+	                                          --  milliseconds
+	return latency
+end
+
+-------------------------------------------------------------------------------
+-- Our handle for the CHAT_MSG_SYSTEM event.
+--
+function Me.OnChatMsgSystem( event, message, sender, _, _, target )
+	-- We're just looking out in here for throttle errors.
+	--if #Me.chat_queue == 0 then -- If the queue isn't started, then we aren't
+		                        -- expecting anything.
+	if not Me.channels_busy[1] then
+		return
+	end
+	
+	-- We check message against this localized string, so if people are on a
+	--  different locale, it should still work fine. As far as I know there
+	--  isn't going to be anything that may slightly modify the message to make
+	--  this not work.
+	if message == ERR_CHAT_THROTTLED and sender == "" then
+		-- Something to think about and probably be wary of is this system
+		--  error popping up randomly and throwing off our latency measurement.
+		-- We still have a minimal safety net at least to avoid any problems
+		--  of this being too low. Also, as far as I'm aware, we're personally
+		--  handling anything that can cause this error, so it's in our field.
+		-- Still, something of a concern, that.
+		Me.StopLatencyRecording()
+		
+		-- So we got a throttle error here, and we want to retry.
+		-- Actually, this doesn't necessarily mean that we need to retry. It's
+		--  a bit of a shitty situation that Blizzard has for us.
+		-- ERR_CHAT_THROTTLED is used as both a warning as an error. If your
+		--  chat message is discarded, you will always get this system error,
+		--  once per message lost. BUT you can also get this error as a
+		--  warning. If you send a lot of chat, you may get it, but all of your
+		--  messages will go through anyway.
+		-- We don't know if this is a warning or a failed message, so to be
+		--  safe (as much as we can be), we wait for a few seconds before
+		--  assuming that the message was indeed lost. It'd be nice if they
+		--  actually gave us a different error if the message was actually
+		--  lost.
+		-- If you have crazy bad latency, Emote Splitter might accidentally
+		--  send two of one of your messages, because there was a big enough
+		--  gap between a "warning" version of this, and then your actual
+		--  chat message. In other words, this error can show up seconds before
+		--  your chat message shows up.
+		-- If we do see the chat confirmed during our waiting period, we cancel
+		Me.ChatFailed( 1 ) -- it and then continue as normal.
+	end
+end
+
+-------------------------------------------------------------------------------
+-- Our hook for when the client gets an error back from one of the community
+-- features.
+function Me.OnClubError( event, action, error, club_type )
+	if #Me.chat_queue == 0 then
+		-- We aren't expecting anything.
+		return 
+	end
+	
+	-- This will match the error that happens when you get throttled by the
+	--  server from sending chat messages too quickly. This error is vague
+	--  though and still matches some other things, like when the stream is
+	--  missing. Hopefully in the future the vagueness disappears so we know
+	--  what sort of error we're dealing with, but for now, we assume it is
+	--  a throttle, and then retry a number of times. We have a failure
+	--  counter that will stop us if we try too many times (where we assume
+	--  it's something else causing the error).
+	if action == Enum.ClubActionType.ErrorClubActionCreateMessage 
+	   and error == Enum.ClubErrorType.ErrorCommunitiesUnknown then
+		Me.ChatFailed( 2 )
+	end
+end
+
+-------------------------------------------------------------------------------
+function Me.OnChatMsgBnOffline( event, ... )
+	local c = Me.channels_busy[1]
+	if not c then
+		-- We aren't expecting anything.
+		return
+	end
+	
+	local senderID = select( 13, ... )
+	
+	if c.type == "BNET" and c.target == senderID then
+		-- Can't send messages to this person. We might have additional
+		--  messages in the queue though, so we don't quite kill ourselves yet.
+		-- We just filter out any messages that are to this person.
+		local i = 1
+		while Me.chat_queue[i] do
+			local c = Me.chat_queue[i]
+			if c.type == "BNET" and c.target == senderID then
+				table.remove( Me.chat_queue, i )
+			else
+				i = i + 1
+			end
+		end
+		
+		Me.ChatConfirmed( 1, true )
+	end
+	
+	-- Something to note about this, because it's potentially dangerous. It
+	--  just so happens to work out all right, currently, but that might change
+	--  in the future.
+	-- If you send a message to someone offline, then the offline
+	--  event usually (?) happens immediately. I'm not sure if it's actually
+	--  guaranteed to happen, but what happens is that this event triggers
+	--  INSIDE the chat queue, so calling ChatConfirmed /before/ we're
+	--  actually outside of our sending hook/system/everything. Just keep that
+	--  in mind and change things accordingly if it causes trouble.
+end
+
+-------------------------------------------------------------------------------
+-- Our hook for CHAT_MSG_GUILD and CHAT_MSG_OFFICER.
+--
+function Me.OnChatMsgGuildOfficer( event, _,_,_,_,_,_,_,_,_,_,_, guid )
+
+	-- These are a fun couple of events, and very messy to deal with. Maybe the
+	--  API might get some improvements in the future, but as of right now
+	--  these show up without any sort of data what club channel they're coming
+	--  from. We just sort of gloss over everything.
+	
+	local cq = Me.channels_busy[2]
+	if cq and guid == Me.PLAYER_GUID then
+		-- confirmed this channel
+		event = event:sub( 10 )
+		
+		-- Typically cq.type will always be CLUB for these, but we handle this
+		--  anyway.
+		if (cq.type == event) 
+		   or (cq.type == "CLUB" and cq.arg3 == GetGuildClub()) then
+			RemoveFromTable( Me.chat_queue, cq )
+			Me.ChatConfirmed( 2 )
+		end
+	end
+end
+
+-------------------------------------------------------------------------------
+-- Hook for when we received a message on a community channel.
+--
+function Me.OnChatMsgCommunitiesChannel( event, _,_,_,_,_,_,_,_,_,_,_, 
+                                         guid, bn_sender_id )
+	local cq = Me.channels_busy[2]
+	if not cq then return end
+	
+	-- This event seems to show up in a few formats. Thankfully, it always
+	--  shows up when you receive a club message, regardless of whether or not
+	--  you have subscribed to that channel in your chatboxes. One gotcha with
+	--  this message is that it's split between Battle.net and regular chat 
+	--  messages. For BNet ones the guid is nil, and the argument after is the
+	--  BNet account ID instead.
+	-- We have a few extra checks down there for prudency, in case something
+	--  changes in the future.
+	if (guid and guid == Me.PLAYER_GUID)
+	   or (bn_sender_id and bn_sender_id ~= 0 and BNIsSelf(bn_sender_id)) then
+		RemoveFromTable( Me.chat_queue, cq )
+		Me.ChatConfirmed( 2 )
+	end
+end
+
+-------------------------------------------------------------------------------
+-- Timer API
+-------------------------------------------------------------------------------
+Me.timers = {}
+Me.last_triggered = {}
+
+function Me.Timer_NotOnCD( slot, period )
+	local time_to_next = (Me.last_triggered[slot] or (-period)) + period - GetTime()
+	if time_to_next <= 0 then
+		return true
+	end
+end
+
+-- slot = string ID
+-- mode = how this timer works or reacts to additional start calls
+--          "push" = cancel existing and wait for the new period to expire
+--          "ignore" = ignore the new call
+--          "duplicate" = leave previous timer running and make new one
+--          "cooldown" = this triggers instantly with a cooldown, 
+--                       additional calls during the cooldown period are 
+--                       merged into a single call at the end of the
+--                       cooldown period. This may trigger inside
+--                       this call.
+function Me.Timer_Start( slot, mode, period, func, ... )
+	if mode == "cooldown" and not Me.timers[slot] then
+		local time_to_next = (Me.last_triggered[slot] or (-period)) + period - GetTime()
+		if time_to_next <= 0 then
+			Me.last_triggered[slot] = GetTime()
+			func()
+			return
+		end
+		
+		-- cooldown remains, ignore or schedule it
+		mode = "ignore"
+		period = time_to_next
+	end
+	
+	if Me.timers[slot] then
+		if mode == "push" then
+			Me.timers[slot].cancel = true
+		elseif mode == "duplicate" then
+			
+		else -- ignore/cooldown/default
+			return
+		end
+	end
+	
+	local this_timer = {
+		cancel = false;
+	}
+	
+	local args = {...}
+	
+	Me.timers[slot] = this_timer
+	C_Timer.After( period, function()
+		if this_timer.cancel then return end
+		Me.timers[slot] = nil
+		Me.last_triggered[slot] = GetTime()
+		func( unpack( args ))
+	end)
+end
+
+function Me.Timer_Cancel( slot )
+	if Me.timers[slot] then
+		Me.timers[slot].cancel = true
+		Me.timers[slot] = nil
+	end
+end
+
+
 Me.frame = Me.frame or CreateFrame( "Frame" )
 Me.frame:UnregisterAllEvents()
 Me.frame:RegisterEvent( "PLAYER_LOGIN" )
 Me.frame:SetScript( OnEvent, Me.OnGameEvent )
+
+-- See you on Moon Guard! :)
+--                ~              ~   The Great Sea ~                  ~
+--^--^--^--^--^--^--^--^--^--^--^--^--^--^--^--^--^--^--^--^--^--^--^--^--^--^-
