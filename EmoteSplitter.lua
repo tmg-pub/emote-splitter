@@ -57,7 +57,8 @@ LibStub("AceAddon-3.0"):NewAddon(-- AceAddon lets us do that
 -- We expose our API and internals to the world as `EmoteSplitter`.
 EmoteSplitter = Me
 
-local L = Me.Locale -- Easy access to our locale data.
+local L      = Me.Locale -- Easy access to our locale data.
+local Gopher = LibGopher
 
 -------------------------------------------------------------------------------
 -- Our slash command /emotesplitter.
@@ -92,7 +93,7 @@ SlashCmdList["EMOTESPLITTER"] = function( msg )
 		-- Our primary concern is probably trolls using this feature, to spam
 		--  a lot of nonsense with tons of split messages. But that's what the
 		--Me.max_message_length = v  -- ignore and report spam features are for,
-		Gopher:SetChunkSize( "OTHER", v )
+		Gopher:SetChunkSizeOverride( "OTHER", v )
 		print( L( "Max message length set to {1}.", v ))         -- right?
 		return
 	end
@@ -111,6 +112,15 @@ function Me:OnEnable()
 	--  add a function to the SlashCmdList table, and then you assign the 
 	--  command to the global SLASH_XYZ1. You can add more aliases with 
 	SLASH_EMOTESPLITTER1 = "/emotesplitter" -- SLASH_XYZ2 or SLASH_XYZ3 etc.
+	
+	-- Gopher events.
+	Gopher.Listen( "SEND_START",      Me.Gopher_SEND_START      )
+	Gopher.Listen( "SEND_DONE",       Me.Gopher_SEND_DONE       )
+	Gopher.Listen( "SEND_DEATH",      Me.Gopher_SEND_DEATH      )
+	Gopher.Listen( "SEND_FAIL",       Me.Gopher_SEND_FAIL       )
+	Gopher.Listen( "SEND_RECOVER",    Me.Gopher_SEND_RECOVER    )
+	Gopher.Listen( "THROTTLER_START", Me.Gopher_THROTTLER_START )
+	Gopher.Listen( "THROTTLER_STOP",  Me.Gopher_THROTTLER_STOP  )
 	
 	-- Unlock the chat editboxes when they show.
 	hooksecurefunc( "ChatEdit_OnShow", Me.ChatEdit_OnShow ) 
@@ -295,9 +305,9 @@ function Me.MisspelledCompatibility()
 	--  space.
 	-- What we do in here is unhook that code and then do it ourselves in one
 	Misspelled:Unhook( "SendChatMessage" )	      -- of our own chat filters. 
-	Me.Listen( "CHAT_NEW", function( text, chat_type, arg3, target, ... )
+	Gopher.Listen( "CHAT_NEW", function( event, text, ... )
 		text = Misspelled:RemoveHighlighting( text )
-		return text, chat_type, arg3, target, ...
+		return text, ...
 	end)
 end
 
@@ -341,7 +351,7 @@ function Me.TonguesCompatibility()
 	--  special function SendChatFromHook...
 	
 	local inside_send_function = function( ... )
-		Me.SendChatFromHook( ... )
+		Gopher.AddChatFromStartEvent( ... )
 	end
 	
 	local tongues_accepted_types = {
@@ -359,7 +369,7 @@ function Me.TonguesCompatibility()
 		CHANNEL       = true;
 	}
 	
-	Me.Listen( "CHAT_NEW", function( msg, type, _, target )
+	Gopher.Listen( "CHAT_NEW", function( event, msg, type, _, target )
 		if not tongues_accepted_types[type:upper()] then
 			-- Don't send any special types through tongues.
 			return

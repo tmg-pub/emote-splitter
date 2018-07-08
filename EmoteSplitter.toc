@@ -1,7 +1,7 @@
 #------------------------------------------------------------------------------
 ## Interface: 70300
 ## Title: Emote Splitter
-## Version: 1.4.3
+## Version: 1.5.0
 ## Notes: Unlocks chatbox and splits long emotes.
 ## Author: Tammya-MoonGuard
 ## OptionalDeps: UnlimitedChatMessage, Misspelled, Tongues
@@ -9,26 +9,20 @@
 #------------------------------------------------------------------------------
 # T A B L E  O F  C O N T E N T S
 
-# --- Library Inclusions -----------------
+# ----- Library Inclusions -----------------
 embeds.xml
 
-# --- Translations -----------------------
+# ----- Translations -----------------------
 locale.lua
 
-# --- Sending Text Indicator Frame XML ---
+# ----- Sending Text Indicator Frame XML ---
 indicator.xml
 
-# --- Main Program -----------------------
+# ----- Main Program -----------------------
 EmoteSplitter.lua
 
-# --- Undo/redo Module -------------------
+# ----- Undo/redo Module -------------------
 emoteprotection.lua
 
-# --- Options Panel ----------------------
+# ----- Options Panel ----------------------
 options.lua
-
-# --- Chat Throttler Module --------------
-throttler.lua
-
-# --- Timer Helper -----------------------
-timer.lua

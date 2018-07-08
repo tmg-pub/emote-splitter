@@ -10,6 +10,7 @@ local L = Me.Locale -- Easy access to our locale.
 -- All of our libs are already safely present from embeds.xml running first.
 local AceConfig       = LibStub("AceConfig-3.0")
 local AceConfigDialog = LibStub("AceConfigDialog-3.0")
+local Gopher          = LibGopher
 
 -------------------------------------------------------------------------------
 -- Another lib we're using in here is AceDB. It's initialized using a table
@@ -126,6 +127,7 @@ local OPTIONS_TABLE = {
 			set = function( info, val )
 				-- Clip to a max of 10 characters.
 				Me.db.global.postmark = val:sub( 1, 10 )
+				Me.Options_Apply()
 			end;
 			get = function( info )
 				return Me.db.global.postmark
@@ -164,6 +166,7 @@ local OPTIONS_TABLE = {
 			--  that's arguably a lot cleaner than some of the other solutions
 			set = function( info, val )          -- there are with lower level 
 				Me.db.global.premark = val:sub( 1, 10 )         -- languages.
+				Me.Options_Apply()
 			end;
 			get = function( info )
 				return Me.db.global.premark
@@ -188,7 +191,10 @@ local OPTIONS_TABLE = {
 			--  as you click it, `set` is called, and then `get`. The checkbox
 			--  will follow what you return in `get`, and won't really toggle
 			--  unless you allow it.
-			set = function( info, val ) Me.db.global.hidefailed = val end;
+			set = function( info, val ) 
+				Me.db.global.hidefailed = val 
+				Me.Options_Apply()
+			end;
 			get = function( info ) return Me.db.global.hidefailed end;
 		};
 		-----------------------------------------------------------------------
@@ -237,6 +243,7 @@ local OPTIONS_TABLE = {
 		--  clarification, and they just get confused or overwhelmed.
 		--  This is where communication skills come into play, hm? Gotta think
 		--  like an idiot to write for an idiot.
+		--[[ This may be re-implemented later, but it's not a great investment.
 		slowpost = {
 			name  = L["Slow Post"];
 			desc  = L["A purely aesthetic option to make Emote Splitter post only one or two messages at a time instead of all at once."];
@@ -247,7 +254,7 @@ local OPTIONS_TABLE = {
 				Me.db.global.slowpost = val 
 			end;
 			get = function( info ) return Me.db.global.slowpost end;
-		};
+		};]]
 		
 	};
 }
@@ -268,6 +275,15 @@ function Me.Options_Init()
 	-- "EmoteSplitter" is our options ID.
 	AceConfig:RegisterOptionsTable( "EmoteSplitter", OPTIONS_TABLE )
 	AceConfigDialog:AddToBlizOptions( "EmoteSplitter", "Emote Splitter" )
+	
+	Me.Options_Apply()
+end
+
+-------------------------------------------------------------------------------
+-- Call when certain options change that need to be passed to Gopher and such.
+function Me.Options_Apply()
+	Gopher.HideFailureMessages( Me.db.global.hide_failure_messages )
+	Gopher.SetSplitmarks( Me.db.global.premark, Me.db.global.postmark, true )
 end
 
 -------------------------------------------------------------------------------

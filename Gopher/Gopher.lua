@@ -261,7 +261,6 @@ Me.hide_failure_messages = true
 Me.frame = Me.frame or CreateFrame( "Frame" )
 Me.frame:UnregisterAllEvents()
 Me.frame:RegisterEvent( "PLAYER_LOGIN" )
-Me.frame:SetScript( OnEvent, Me.OnGameEvent )
 
 -------------------------------------------------------------------------------
 -- Called after player login (or reload). Time to set things up.
@@ -342,6 +341,13 @@ function Me.OnGameEvent( frame, event, ... )
 	elseif event == "PLAYER_LOGIN" then
 		Me.OnLogin()
 	end
+end
+
+Me.frame:SetScript( "OnEvent", Me.OnGameEvent )
+
+-------------------------------------------------------------------------------
+function Me.HideFailureMessages( hide )
+	Me.hide_failure_messages = hide
 end
 
 -------------------------------------------------------------------------------
@@ -535,10 +541,12 @@ function Me.SetChunkSizeOverride( chat_type, chunk_size )
 	Me.chunk_size_overrides[chat_type] = chunk_size
 end
 
+-------------------------------------------------------------------------------
 function Me.SetTempChunkSize( chunk_size )
 	Me.next_chunk_size = chunk_size
 end
 
+-------------------------------------------------------------------------------
 function Me.SetSplitmarks( pre, post, sticky )
 	if sticky then
 		if pre ~= false then Me.splitmark_start = pre end
@@ -549,6 +557,7 @@ function Me.SetSplitmarks( pre, post, sticky )
 	end
 end
 
+-------------------------------------------------------------------------------
 function Me.GetSplitmarks( sticky )
 	if sticky then
 		return Me.splitmark_start, Me.splitmark_end
@@ -557,11 +566,13 @@ function Me.GetSplitmarks( sticky )
 	end
 end
 
+-------------------------------------------------------------------------------
 function Me.SetPadding( prefix, suffix )
 	if prefix ~= false then Me.chunk_prefix = prefix end
 	if suffix ~= false then Me.chunk_suffix = suffix end
 end
 
+-------------------------------------------------------------------------------
 function Me.GetPadding()
 	return Me.chunk_prefix, Me.chunk_suffix
 end
@@ -652,7 +663,7 @@ end
 function Me.FireEventEx( event, start, ... )
 	start = start or 1
 	local args = {...}
-	for index = start, #Me.chat_hooks[event] do
+	for index = start, #Me.event_hooks[event] do
 		table.insert( Me.hook_stack, Me.event_hooks[event][index] )
 		local args2 = { pcall( Me.event_hooks[event][index], event, unpack( args )) }
 		table.remove( Me.hook_stack )
@@ -717,7 +728,7 @@ function Me.AddChat( msg, chat_type, arg3, target, hook_start )
 	msg = tostring( msg or "" )
 	
 	msg, chat_type, arg3, target = 
-	   Me.FireEventEx( "CHAT_START", hook_start, msg, chat_type, arg3, target )
+	   Me.FireEventEx( "CHAT_NEW", hook_start, msg, chat_type, arg3, target )
 		
 	if msg == false then
 		Me.ResetState()
@@ -737,9 +748,9 @@ function Me.AddChat( msg, chat_type, arg3, target, hook_start )
 	--  larger max message length. By default we split those types of messages
 	--  up at the 400 character mark rather than 255.
 	local chunk_size = Me.chunk_size_overrides[chat_type]
-	                      or Me.chunk_size_defaults[chat_type]
+	                      or Me.default_chunk_sizes[chat_type]
 	                      or Me.chunk_size_overrides.OTHER
-	                      or Me.chunk_size_defaults.OTHER
+	                      or Me.default_chunk_sizes.OTHER
 	if chat_type == "CHANNEL" then
 		-- Chat type CHANNEL can either be a normal legacy chat channel, or the
 		--  user can be typing in a chat channel that's linked to a community
@@ -759,9 +770,9 @@ function Me.AddChat( msg, chat_type, arg3, target, hook_start )
 				target     = stream_id
 				chunk_size = Me.club_chunk_size
 				chunk_size = Me.chunk_size_overrides.CLUB
-				              or Me.chunk_size_defaults.CLUB
+				              or Me.default_chunk_sizes.CLUB
 							  or Me.chunk_size_overrides.OTHER
-							  or Me.chunk_size_defaults.OTHER
+							  or Me.default_chunk_sizes.OTHER
 			end
 		end
 	elseif chat_type == "GUILD" or chat_type == "OFFICER" then
@@ -1109,13 +1120,13 @@ function Me.QueueChat( msg, type, arg3, target )
 end
 
 function Me.AnyChannelsBusy()
-	for i = 1,MY_NUM_CHANNELS do
+	for i = 1, Me.NUM_CHANNELS do
 		if Me.channels_busy[i] then return true end
 	end
 end
 
 function Me.AllChannelsBusy()
-	for i = 1,MY_NUM_CHANNELS do
+	for i = 1, Me.NUM_CHANNELS do
 		if not Me.channels_busy[i] then return false end
 	end
 	return true
@@ -1180,8 +1191,8 @@ function Me.ChatQueueNext()
 		else
 			local channel = QUEUED_TYPES[q.type]
 			if not Me.channels_busy[channel] then
-				Me.Timer_Start( "gopher_channel_"..channel, "push", CHAT_TIMEOUT, 
-				                                        Me.ChatDeath, channel )
+				Me.Timer_Start( "gopher_channel_"..channel, "push", 
+				                       Me.CHAT_TIMEOUT, Me.ChatDeath, channel )
 				Me.CommitChat( q )
 				Me.channels_busy[channel] = q
 				if Me.AllChannelsBusy() then
@@ -1222,7 +1233,7 @@ function Me.ChatDeath()
 	Me.FireEvent( "SEND_DEATH", Me.chat_queue )
 	wipe( Me.chat_queue )
 	Me.sending_active = false
-	for i = 1, MY_NUM_CHANNELS do
+	for i = 1, Me.NUM_CHANNELS do
 		Me.channels_busy[i] = nil
 	end
 	
@@ -1266,7 +1277,7 @@ function Me.ChatFailed( channel )                         --  message.
 	--  by some sort of throttle, so we count the errors and die after waiting
 	--  for so many.
 	Me.failures = Me.failures + 1
-	if Me.failures >= FAILURE_LIMIT then
+	if Me.failures >= Me.FAILURE_LIMIT then
 		Me.ChatDeath()
 		return
 	end
@@ -1280,14 +1291,15 @@ function Me.ChatFailed( channel )                         --  message.
 	--  the throttler, so we don't account for latency.
 	local wait_time
 	if channel == 2 then -- CLUB channels
-		wait_time = CHAT_THROTTLE_WAIT
+		wait_time = Me.CHAT_THROTTLE_WAIT
 	else
 		wait_time = math.min( 10, math.max( 1.5 + Me.GetLatency(),
-		                                                  CHAT_THROTTLE_WAIT ))
+		                                               Me.CHAT_THROTTLE_WAIT ))
 	end
 	
 	Me.Timer_Start( "gopher_channel_"..channel, "push", wait_time,
 	                                              Me.ChatFailedRetry, channel )
+	print( "DEBUG CHATFAIL" )
 end                          
 
 -------------------------------------------------------------------------------
@@ -1330,6 +1342,7 @@ function Me.TryConfirm( kind, guid )
 		-- Confirmed this channel.
 		RemoveFromTable( Me.chat_queue, Me.channels_busy[channel] )
 		Me.ChatConfirmed( channel )
+		print( "DEBUG CHATCONFIRM" )
 	end
 end
 

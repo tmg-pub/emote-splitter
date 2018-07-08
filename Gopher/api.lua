@@ -53,7 +53,6 @@ end
 -- 
 -- There are also a number of other events that Gopher exposes for your
 --  consumption.
---
 -------------------------------------------------------------------------------
 -- CHAT EVENTS
 --
@@ -357,6 +356,15 @@ Gopher.ThrottlerHealth = Internal.ThrottlerHealth
 -- Returns true if the chat throttler is currently waiting through a delay.
 --
 Gopher.ThrottlerActive = Internal.ThrottlerActive
+
+-------------------------------------------------------------------------------
+-- Gopher.HideFailureMessages( hide )
+-- 
+-- Pass true to suppress the system messages when your chat is throttled by the
+--  server. This is on by default,  and usually  only turned off for diagnostic
+--  purposes.
+--
+Gopher.HideFailureMessages = Internal.HideFailureMessages
 
 -------------------------------------------------------------------------------
 -- Gopher.Timer_Start( slot, mode, period, func, ... )
