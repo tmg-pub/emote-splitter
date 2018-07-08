@@ -43,7 +43,6 @@
 --  EmoteSplitter, no spaces), and a special table. We use this table to pass
 local AddonName, Me = ...  -- around info from our other files.
 
-
 -- We're embedding our "AceAddon" into that table. 
 LibStub("AceAddon-3.0"):NewAddon(-- AceAddon lets us do that
 	-- by passing it into here as the first argument, so it doesn't create
@@ -103,19 +102,7 @@ end
 -- Here's the real initialization code. This is called after all addons are 
 --                                     -- initialized, and so is the game.
 function Me:OnEnable()
-	-- We definitely cannot work if UnlimitedChatMessage is enabled at the
-	--  same time. If we see that it's loaded, then we cancel our operation
-	if UCM then -- in favor of it. Just print a notice instead. Better than 
-		        --  everything just breaking.
-		-- We have UnlimitedChatMessage listed in the TOC file as an optional
-		--  dependency. That's so this loads after it, so we can always catch
-		--  this problem.
-		print( L["Emote Splitter cannot run with UnlimitedChatMessage enabled."] )
-		-- Now, we /could/ just hack up UCM in here and disable it ourselves,
-		--  but I think this is a bit more of a nice approach...
-		return
-	end
-	
+
 	-- Some miscellaneous things here.
 	-- See options.lua. This is initializing our configuration database, so 
 	Me.Options_Init() -- it's needed before we can access Me.db.etc.
@@ -164,6 +151,10 @@ function Me:OnEnable()
 	
 	-- Initialize other modules here.
 	Me.EmoteProtection.Init()
+	
+	-- And then compatibility stuff.
+	Me.MisspelledCompatibility()
+	Me.TonguesCompatibility()
 end
 
 -------------------------------------------------------------------------------
@@ -211,16 +202,54 @@ function Me.SendingText_Hide()
 end
 
 -------------------------------------------------------------------------------
--- These are callbacks from the throttler (throttler.lua). They're only called
---  when we're sending a lot of chat, and the throttler has delayed for a bit.
---
-function Me.OnThrottlerStart()
+function Me.Gopher_SEND_START()
 	Me.SendingText_ShowSending()
 end
 
+-------------------------------------------------------------------------------
+function Me.Gopher_SEND_DONE()
+	Me.SendingText_Hide()
+end
+
+-------------------------------------------------------------------------------
+function Me.Gopher_SEND_DEATH()
+	Me.SendingText_Hide()
+	
+	-- I feel like we should wrap these types of print calls in something to
+	--  standardize the formatting and such.
+	print( "|cffff0000<" .. L["Chat failed!"] .. ">|r" )
+end
+
+-------------------------------------------------------------------------------
+function Me.Gopher_SEND_FAIL()
+	Me.SendingText_ShowFailed()  -- We also update our little indicator to show
+end
+
+-------------------------------------------------------------------------------
+function Me.Gopher_SEND_RECOVER()
+
+	-- We have an option to hide any sort of failure messages during
+	--  semi-normal operation. If that's disabled, then we tell the user when
+	--  we're resending their message. Otherwise, it's a seamless operation.
+	if not Me.db.global.hidefailed then -- All errors are hidden and everything
+		                                -- happens in the background.
+		print( "|cffff00ff<" .. L["Resending..."] .. ">" )
+	end
+	Me.SendingText_ShowSending()
+end
+
+-------------------------------------------------------------------------------
+-- These are callbacks from the throttler (throttler.lua). They're only called
+--  when we're sending a lot of chat, and the throttler has delayed for a bit.
+--
+function Me.Gopher_THROTTLER_START()
+	Me.SendingText_ShowSending()
+end
+
+-------------------------------------------------------------------------------
 -- And this is after all messages are sent.
-function Me.OnThrottlerStop()
-	if not Me.AnyChannelsBusy() then
+function Me.Gopher_THROTTLER_STOP()
+	if not Gopher.AnyChannelsBusy() then
 		Me.SendingText_Hide()
 	end
 end
@@ -246,6 +275,116 @@ function Me.UnlockCommunitiesChat()
 	CommunitiesFrame.ChatEditBox:SetMaxBytes( 0 )
 	CommunitiesFrame.ChatEditBox:SetMaxLetters( 0 )
 	CommunitiesFrame.ChatEditBox:SetVisibleTextByteLimit( 0 )
+end
+
+-------------------------------------------------------------------------------
+-- Handle compatibility for the Misspelled addon.
+--
+function Me.MisspelledCompatibility()
+	if not Misspelled then return end
+	if not Misspelled.hooks and not Misspelled.hooks.SendChatMessage then 
+		-- Something changed.
+		return
+	end
+	
+	-- The Misspelled addon inserts color codes that are removed in its own
+	--  hooks to SendChatMessage. This isn't ideal, because it can set up its
+	--  hooks in the wrong "spot". In other words, its hooks might execute 
+	--  AFTER we've already cut up the message to proper sizes, meaning that 
+	--  it's going to make our slices even smaller, filled with a lot of empty
+	--  space.
+	-- What we do in here is unhook that code and then do it ourselves in one
+	Misspelled:Unhook( "SendChatMessage" )	      -- of our own chat filters. 
+	Me.Listen( "CHAT_NEW", function( text, chat_type, arg3, target, ... )
+		text = Misspelled:RemoveHighlighting( text )
+		return text, chat_type, arg3, target, ...
+	end)
+end
+
+-------------------------------------------------------------------------------
+-- Please read the following comments in your most maniacal voice, complete
+--  with evil cackles. I almost gave up several times on this, and it's not
+--  /really/ compatible, as I doubt Tongues' protocol even supports split
+--  messages.
+--
+function Me.TonguesCompatibility()
+	if not Tongues then return end -- No Tongues.
+	
+	-- First... we want to kill Tongues' SendChatMessage hook. All it does is 
+	--  pass execution to HandleSend. We'll unhook their SendChatMessage hook
+	--  by turning HandleSend into a dummy function, and then hook HandleSend
+	--  ourselves...
+	local stolen_handle_send = Tongues.HandleSend
+	local tongues_hook = Tongues.Hooks.Send
+	Tongues.HandleSend = function( self, msg, type, langid, lang, channel )
+		tongues_hook( msg, type, langid, channel )
+	end
+	
+	-- We reset their saved function for their hook with something that
+	--  lets us know that they want to make a call to it. Why is this even
+	--  necessary...? Don't question it!
+	local tongues_is_calling_send = false
+	local outside_send_function = function( ... )
+		tongues_is_calling_send = true
+		-- We use pcall to ignore errors, so tongues_is_calling_send doesn't
+		--  get stuck, and it's likely that we'll run into a handful of errors
+		--  if we have Tongues loaded.
+		local a,b,c,d = ...
+		pcall( SendChatMessage, a, b, c, d )
+		tongues_is_calling_send = false
+	end
+	
+	Tongues.Hooks.Send = outside_send_function
+	
+	-- Now... inside of our chat filter, we know if we're doing an organic call
+	--  or not... If it is, we replace this hook temporarily to use our most
+	--  special function SendChatFromHook...
+	
+	local inside_send_function = function( ... )
+		Me.SendChatFromHook( ... )
+	end
+	
+	local tongues_accepted_types = {
+		SAY           = true;
+		EMOTE         = true;
+		YELL          = true;
+		PARTY         = true;
+		GUILD         = true;
+		OFFICER       = true;
+		RAID          = true;
+		RAID_WARNING  = true;
+		INSTANCE_CHAT = true;
+		BATTLEGROUND  = true;
+		WHISPER       = true;
+		CHANNEL       = true;
+	}
+	
+	Me.Listen( "CHAT_NEW", function( msg, type, _, target )
+		if not tongues_accepted_types[type:upper()] then
+			-- Don't send any special types through tongues.
+			return
+		end
+		
+		if tongues_is_calling_send then
+			-- If Tongues is calling this, then we just skip our filter.
+			return
+		end
+		
+		-- And then replace the hook and call their handle send.
+		Tongues.Hooks.Send = inside_send_function
+		
+		local langID, lang = GetSpeaking() -- Tongues adds this global.
+		
+		-- We need to use pcall, otherwise our Hooks.Send is going to be
+		--  botched if we break out of here from an error.
+		pcall( stolen_handle_send, Tongues, msg, type, langID, lang, target )
+		
+		-- And then put it back...
+		Tongues.Hooks.Send = outside_send_function
+		
+		-- :)
+		return false
+	end)
 end
 
 -- See you on Moon Guard! :)

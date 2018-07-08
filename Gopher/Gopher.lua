@@ -9,7 +9,7 @@
 --  sell copies of the Software,  and to permit persons to whom the Software is
 --  furnished to do so, subject to the following conditions:
 --
--- The above  copyright  notice  and  this permission notice  shall be included 
+-- The above  copyright  notice  and  this permission notice  shall be included
 --  in all copies or substantial portions of the Software.
 --
 -- THE SOFTWARE IS PROVIDED "AS IS",  WITHOUT WARRANTY OF ANY KIND,  EXPRESS OR
@@ -20,6 +20,8 @@
 --  FROM,  OUT  OF  OR  IN CONNECTION WITH THE SOFTWARE  OR  THE USE  OR  OTHER
 --  DEALINGS IN THE SOFTWARE.
 --
+-- See api.lua for the public API.
+--
 -- Here are the key features that this library provides:
 --   * Allows SendChatMessage  and  other  similar methods  to  accept messages
 --      larger than  255  characters,  and automatically  split  them up.  Also
@@ -27,10 +29,10 @@
 --      their own message.
 --   * Robust message queue system  which  re-sends failed messages.  Sometimes
 --      the server might give you  an  error  if  you send messages immediately
---      after the last.  Gopher works around that by saving  your  messages and 
+--      after the last.  Gopher works around that by saving  your  messages and
 --      verifying the response from the server.
 --   * Support  for  all  chat types.  Alongside  public  messages,  Gopher  is
---      compatible  with  the  other  chat  channels.  Gopher also ensures that 
+--      compatible  with  the  other  chat  channels.  Gopher also ensures that
 --      messages will  be  received in order that they're sent,  and corrects a
 --      quirk with Battle.net whispers. Weak support for global channels.
 --   * Seamless feel. Gopher should feel like there's nothing going on.
@@ -40,14 +42,16 @@
 
 local VERSION = 1
 
-local Me = Gopher
-
 if IsLoggedIn() then
 	error( "Gopher can't be loaded on demand!" )
 end
 
-if Me then
+local Me
+
+if LibGopher then
+	Me = LibGopher.Internal
 	if Me.VERSION >= VERSION then
+		Me.load = false
 		-- Already loaded.
 		return
 	end
@@ -61,11 +65,15 @@ if Me then
 
 	---------------------------------------------------------------------------
 else
-	Me     = {}
-	Gopher = Me
+	LibGopher = {
+		Internal = {}
+	}
+	
+	Me = LibGopher.Internal
 end
 
 Me.VERSION = VERSION
+Me.load    = true
 
 -------------------------------------------------------------------------------
 -- Here's our chat-queue system. 
@@ -146,10 +154,10 @@ Me.event_hooks = {    -- functions.
 	SEND_START     = {};
 	
 	-- SEND_FAIL is when the chat system detects a throttle failure or such,
-	--  and will be working to recover or re-send. RESUME is triggered when
+	--  and will be working to recover or re-send. RECOVER is triggered when
 	--  it retries.
 	SEND_FAIL      = {};
-	SEND_RESUME    = {};
+	SEND_RECOVER   = {};
 	
 	-- SEND_DEATH is when the chat system timed out and a hard reset is done 
 	--  to recover.
@@ -163,6 +171,11 @@ Me.event_hooks = {    -- functions.
 	-- SEND_DONE is when the chat system has emptied its queue and goes back
 	--  to being idle.
 	SEND_DONE      = {};
+	
+	-- Called when messages are being sent and there need to be delays to not
+	--  overrun bandwidth.
+	THROTTLER_START = {};
+	THROTTLER_STOP  = {};
 }
 
 Me.hook_stack = {} -- Our stack for hooks in case we're nesting things with
@@ -216,6 +229,9 @@ end
 --  that split on the 400 mark.
 Me.chunk_size_overrides = {}
 
+-- This overrides the next chat message's chunk size no questions asked.
+Me.next_chunk_size = nil
+
 -------------------------------------------------------------------------------
 -- We do some latency tracking ourselves, since the one provided by the game
 --  isn't very accurate at all when it comes to recent events. The one in the
@@ -228,7 +244,9 @@ Me.latency_recording = nil  --         when we receive a server event.
 -- You might have some questions, why I'm setting some table values to nil 
 --  (which effectively does nothing), but it's just to keep things well 
 --  defined up here.
-
+-------------------------------------------------------------------------------
+-- Hide system messages when chat is throttled.
+Me.hide_failure_messages = true
 -------------------------------------------------------------------------------
 -- A lot of these definitions used to be straight local variables, but this is
 --  a little bit cleaner, keeping things inside of this table, as well
@@ -240,125 +258,10 @@ Me.latency_recording = nil  --         when we receive a server event.
 --  others to mess with your code from the outside if they need to.
 -------------------------------------------------------------------------------
 
-function Me.AddCompatibilityLayers()
-	if Me.compat then return end
-	Me.compat = VERSION
-	
-	Me.MisspelledCompatibility()
-	Me.TonguesCompatibility()
-	Me.UCMCompatibility()
-end
-
--------------------------------------------------------------------------------
--- Handle compatibility for the Misspelled addon.
---
-function Me.MisspelledCompatibility()
-	if not Misspelled then return end
-	
-	-- The Misspelled addon inserts color codes that are removed in its own
-	--  hooks to SendChatMessage. This isn't ideal, because it can set up its
-	--  hooks in the wrong "spot". In other words, its hooks might execute 
-	--  AFTER we've already cut up the message to proper sizes, meaning that 
-	--  it's going to make our slices even smaller, filled with a lot of empty
-	--  space.
-	-- What we do in here is unhook that code and then do it ourselves in one
-	Misspelled:Unhook( "SendChatMessage" )	      -- of our own chat filters. 
-	Me.Listen( "CHAT_NEW", function( text, chat_type, arg3, target, ... )
-		text = Misspelled:RemoveHighlighting( text )
-		return text, chat_type, arg3, target, ...
-	end)
-end
-
--------------------------------------------------------------------------------
--- Please read the following comments in your most maniacal voice, complete
---  with evil cackles. I almost gave up several times on this, and it's not
---  /really/ compatible, as I doubt Tongues' protocol even supports split
---  messages.
---
-function Me.TonguesCompatibility()
-	if not Tongues then return end -- No Tongues.
-	
-	-- First... we want to kill Tongues' SendChatMessage hook. All it does is 
-	--  pass execution to HandleSend. We'll unhook their SendChatMessage hook
-	--  by turning HandleSend into a dummy function, and then hook HandleSend
-	--  ourselves...
-	local stolen_handle_send = Tongues.HandleSend
-	local tongues_hook = Tongues.Hooks.Send
-	Tongues.HandleSend = function( self, msg, type, langid, lang, channel )
-		tongues_hook( msg, type, langid, channel )
-	end
-	
-	-- We reset their saved function for their hook with something that
-	--  lets us know that they want to make a call to it. Why is this even
-	--  necessary...? Don't question it!
-	local tongues_is_calling_send = false
-	local outside_send_function = function( ... )
-		tongues_is_calling_send = true
-		-- We use pcall to ignore errors, so tongues_is_calling_send doesn't
-		--  get stuck, and it's likely that we'll run into a handful of errors
-		--  if we have Tongues loaded.
-		local a,b,c,d = ...
-		pcall( SendChatMessage, a, b, c, d )
-		tongues_is_calling_send = false
-	end
-	
-	Tongues.Hooks.Send = outside_send_function
-	
-	-- Now... inside of our chat filter, we know if we're doing an organic call
-	--  or not... If it is, we replace this hook temporarily to use our most
-	--  special function SendChatFromHook...
-	
-	local inside_send_function = function( ... )
-		Me.SendChatFromHook( ... )
-	end
-	
-	local tongues_accepted_types = {
-		SAY           = true;
-		EMOTE         = true;
-		YELL          = true;
-		PARTY         = true;
-		GUILD         = true;
-		OFFICER       = true;
-		RAID          = true;
-		RAID_WARNING  = true;
-		INSTANCE_CHAT = true;
-		BATTLEGROUND  = true;
-		WHISPER       = true;
-		CHANNEL       = true;
-	}
-	
-	Me.Listen( "CHAT_NEW", function( msg, type, _, target )
-		if not tongues_accepted_types[type:upper()] then
-			-- Don't send any special types through tongues.
-			return
-		end
-		
-		if tongues_is_calling_send then
-			-- If Tongues is calling this, then we just skip our filter.
-			return
-		end
-		
-		-- And then replace the hook and call their handle send.
-		Tongues.Hooks.Send = inside_send_function
-		
-		local langID, lang = GetSpeaking() -- Tongues adds this global.
-		
-		-- We need to use pcall, otherwise our Hooks.Send is going to be
-		--  botched if we break out of here from an error.
-		pcall( stolen_handle_send, Tongues, msg, type, langID, lang, target )
-		
-		-- And then put it back...
-		Tongues.Hooks.Send = outside_send_function
-		
-		-- :)
-		return false
-	end)
-end
-
--------------------------------------------------------------------------------
-function Me.UCMCompatibility()
-	if not UCM then return end -- No UCM
-end
+Me.frame = Me.frame or CreateFrame( "Frame" )
+Me.frame:UnregisterAllEvents()
+Me.frame:RegisterEvent( "PLAYER_LOGIN" )
+Me.frame:SetScript( OnEvent, Me.OnGameEvent )
 
 -------------------------------------------------------------------------------
 -- Called after player login (or reload). Time to set things up.
@@ -451,51 +354,7 @@ local function FindTableValue( table, value ) -- first value that matches the
 end
 
 -------------------------------------------------------------------------------
--- Gopher exposes a number of its execution points via events. These are
---  primarily for third party addons to monitor or adjust text that's sent by
---  the user at different points throughout our system.
--- 
--- The reason for this is to avoid any more hooking of the SendChatMessage
---  function itself. Normally an addon would hook SendChatMessage if they want
---  to insert something (like replacing a certain keyword on the way out, or
---  removing text) but with Gopher you don't know if you're going to get your 
---  hook called before OR after the text is split up into smaller sections. 
---  A clear problem with this, is that if you want to insert text, and the 
---  text is already cut up, then you're going to push text past the
---  255-character limit and some is going to get cut off.
--- 
--- The signature for the callback function (func) is:
---
---   function( text, chat_type, arg3, target )
---
--- Arguments passed to it are fairly straightforward, and the same are
---  passed to SendChatMessage.
---
---   text:      The message text.
---   chat_type: "SAY", "EMOTE" etc, also includes our custom 
---               types "BNET", "CLUB".
---   arg3:      Language ID (a number), or club ID
---   target:    Depending on chat_type this is either a channel name, a
---               whisper target, a presence ID, or a community stream ID.
---
---   Return false from this function to block the message from being sent--to
---    discard it. Return nil to do nothing, and let the message pass through.
---   Otherwise, `return text, chat_type, arg3, target` to modify the chat
---    message. Take extra care to make sure that you're only setting these to
---    valid values.
---
--- `point` is where you will hook the system. This can be:
--- "CHAT_NEW"       Hook at the start, the message is raw and hasn't been cut 
---                   up yet.
--- "CHAT_QUEUE"     Called before the message is about to be queued. This is a 
---                   cut and primped message and this hook may trigger multiple
---                   times for a single, longer message.
--- "CHAT_POSTQUEUE" Called right after the message is queued. You can't cancel
---                   or change the message from in here, and return values are
---                   ignored.
---
--- Returns `true` if the hook was added, and `false` if it already exists.
---
+-- Add an event listener. See api.lua for extensive documentation.
 function Me.Listen( event, func )
 	if not Me.event_hooks[event] then
 		error( "Invalid event." )
@@ -544,7 +403,7 @@ end
 --  original, or they're attaching some metadata that's whispered or something.
 -- Very weird uses, but look, this is literally just for Tongues.
 -- Chat messages that are spawned using this do not go through your CHAT_NEW
---  event listener twice. When they're processed, the filter list resumes right 
+--  event listener twice. When they're processed, the filter list resumes right
 --  after where yours was.
 -- If you DO want to make a completely fresh message that goes through the
 --  entire chain again, just make a direct call to AddChat.
@@ -676,6 +535,37 @@ function Me.SetChunkSizeOverride( chat_type, chunk_size )
 	Me.chunk_size_overrides[chat_type] = chunk_size
 end
 
+function Me.SetTempChunkSize( chunk_size )
+	Me.next_chunk_size = chunk_size
+end
+
+function Me.SetSplitmarks( pre, post, sticky )
+	if sticky then
+		if pre ~= false then Me.splitmark_start = pre end
+		if post ~= false then Me.splitmark_end = post end
+	else
+		if pre ~= false then Me.splitmark_end_temp = pre end
+		if post ~= false then Me.splitmark_start_temp = post end
+	end
+end
+
+function Me.GetSplitmarks( sticky )
+	if sticky then
+		return Me.splitmark_start, Me.splitmark_end
+	else
+		return Me.splitmark_start_temp, Me.splitmark_end_temp
+	end
+end
+
+function Me.SetPadding( prefix, suffix )
+	if prefix ~= false then Me.chunk_prefix = prefix end
+	if suffix ~= false then Me.chunk_suffix = suffix end
+end
+
+function Me.GetPadding()
+	return Me.chunk_prefix, Me.chunk_suffix
+end
+
 -------------------------------------------------------------------------------
 -- Function for splitting text on newlines or newline markers (literal "\n").
 --
@@ -684,8 +574,6 @@ end
 --  newlines, then this is going to just return { text }.
 --                               --
 function Me.SplitLines( text )   --
-	-- We still want to send empty messages for AFK, DND, etc.
-	if text == "" then return {""} end
 	-- We merge "\n" into LF too. This might seem a little bit unwieldy, right?
 	-- Like, you're wondering what if the user pastes something
 	--  like "C:\nothing\etc..." into their chatbox to send to someone. It'll
@@ -704,6 +592,10 @@ function Me.SplitLines( text )   --
 		table.insert( lines, line )         --
 	end                                     --
 	                                        --
+	-- We still want to send empty messages for AFK, DND, etc.
+	if #lines == 0 then
+		lines[1] = ""
+	end
 	-- We used to handle this a bit differently, which was pretty nasty in
 	--  regard to chat filters and such. It's a /little/ more complex now,
 	return lines -- but a much better solution in the end.
@@ -793,8 +685,13 @@ function Me.FireEvent( event, ... )
 end
 
 function Me.ResetState()
-	Me.suppress     = false
-	Me.queue_paused = false
+	Me.suppress             = nil
+	Me.queue_paused         = nil
+	Me.next_chunk_size      = nil
+	Me.splitmark_end_temp   = nil
+	Me.splitmark_start_temp = nil
+	Me.chunk_prefix         = nil
+	Me.chunk_suffix         = nil
 end
 
 -------------------------------------------------------------------------------
@@ -810,9 +707,9 @@ end
 function Me.AddChat( msg, chat_type, arg3, target, hook_start )
 	if Me.suppress then
 		-- We don't touch suppressed messages.
-		Me.FireEvent( "QUEUE", msg, chat_type, arg3, target )
+		Me.FireEvent( "CHAT_QUEUE", msg, chat_type, arg3, target )
 		Me.QueueChat( msg, chat_type, arg3, target )
-		Me.FireEvent( "POSTQUEUE", msg, chat_type, arg3, target )
+		Me.FireEvent( "CHAT_POSTQUEUE", msg, chat_type, arg3, target )
 		Me.ResetState()
 		return
 	end
@@ -820,7 +717,7 @@ function Me.AddChat( msg, chat_type, arg3, target, hook_start )
 	msg = tostring( msg or "" )
 	
 	msg, chat_type, arg3, target = 
-		Me.FireEventEx( "START", hook_start, msg, chat_type, arg3, target )
+	   Me.FireEventEx( "CHAT_START", hook_start, msg, chat_type, arg3, target )
 		
 	if msg == false then
 		Me.ResetState()
@@ -896,6 +793,10 @@ function Me.AddChat( msg, chat_type, arg3, target, hook_start )
 		end
 	end
 	
+	if Me.next_chunk_size then
+		chunk_size = Me.next_chunk_size
+	end
+	
 	-- And we iterate over each, pass them to our main splitting function 
 	--  (the one that cuts them to smaller chunks), and then feed them off
 	--  to our main chat queue system. That call might even bypass our queue
@@ -905,11 +806,11 @@ function Me.AddChat( msg, chat_type, arg3, target, hook_start )
 		local chunks = Me.SplitMessage( line, chunk_size )
 		for i = 1, #chunks do
 			local chunk_msg, chunk_type, chunk_arg3, chunk_target =
-				Me.FireEvent( "QUEUE", chunks[i], chat_type, arg3, target )
+			   Me.FireEvent( "CHAT_QUEUE", chunks[i], chat_type, arg3, target )
 				
 			if chunk_msg then
 				Me.QueueChat( chunk_msg, chunk_type, chunk_arg3, chunk_target )
-				Me.FireEvent( "POSTQUEUE", chunk_msg, chunk_type, 
+				Me.FireEvent( "CHAT_POSTQUEUE", chunk_msg, chunk_type, 
 				                                     chunk_arg3, chunk_target )
 			end
 		end
@@ -959,8 +860,10 @@ function Me.SplitMessage( text, chunk_size, splitmark_start, splitmark_end,
 	chunk_size      = chunk_size or Me.default_chunk_sizes.OTHER
 	chunk_prefix    = chunk_prefix or ""
 	chunk_suffix    = chunk_suffix or ""
-	splitmark_start = splitmark_start or Me.splitmark_start
-	splitmark_end   = splitmark_end or Me.splitmark_end
+	splitmark_start = splitmark_start or Me.splitmark_start_temp 
+	                                                or Me.splitmark_start or ""
+	splitmark_end   = splitmark_end or Me.splitmark_end_temp 
+	                                                  or Me.splitmark_end or ""
 	local pad_len   = chunk_prefix:len() + chunk_suffix:len()
 	
 	-- For short messages we can not waste any time and return immediately
@@ -1218,6 +1121,10 @@ function Me.AllChannelsBusy()
 	return true
 end
 
+function Me.SendingActive()
+	return Me.sending_active
+end
+
 -------------------------------------------------------------------------------
 -- Execute the chat queue.
 --
@@ -1244,7 +1151,6 @@ function Me.ChatQueueNext()
 	if #Me.chat_queue == 0 then -- back to idle mode.
 		if not Me.AnyChannelsBusy() and Me.sending_active then
 			Me.FireEvent( "SEND_DONE" )
-			--*Me.SendingText_Hide()
 			Me.failures       = 0
 			Me.sending_active = false
 		end
@@ -1256,7 +1162,6 @@ function Me.ChatQueueNext()
 		Me.FireEvent( "SEND_START" )
 	end
 	-- Otherwise, we're gonna send another message. 
-	--*Me.SendingText_ShowSending()
 	
 	local i = 1
 	while i <= #Me.chat_queue do
@@ -1289,7 +1194,6 @@ function Me.ChatQueueNext()
 	
 	if not Me.AnyChannelsBusy() and Me.sending_active then
 		Me.FireEvent( "SEND_DONE" )
-		--*Me.SendingText_Hide()
 		Me.failures = 0
 		Me.sending_active = false
 	end
@@ -1316,16 +1220,12 @@ end
 --  intense latency. We just want to reset completely to recover.
 function Me.ChatDeath() 
 	Me.FireEvent( "SEND_DEATH", Me.chat_queue )
-	--*Me.SendingText_Hide()
 	wipe( Me.chat_queue )
 	Me.sending_active = false
 	for i = 1, MY_NUM_CHANNELS do
 		Me.channels_busy[i] = nil
 	end
 	
-	-- I feel like we should wrap these types of print calls in something to
-	--  standardize the formatting and such.
-	--*print( "|cffff0000<" .. L["Chat failed!"] .. ">|r" )
 end
 
 -------------------------------------------------------------------------------
@@ -1372,7 +1272,6 @@ function Me.ChatFailed( channel )                         --  message.
 	end
 	
 	Me.FireEvent( "SEND_FAIL", unpack(Me.channels_busy[channel]) )
-	--*Me.SendingText_ShowFailed()  -- We also update our little indicator to show
 	
 	Me.channels_busy[channel] = nil
 	
@@ -1395,14 +1294,6 @@ end
 -- For restarting the chat queue after a failure.
 --
 function Me.ChatFailedRetry()
-	-- We have an option to hide any sort of failure messages during
-	--  semi-normal operation. If that's disabled, then we tell the user when
-	--  we're resending their message. Otherwise, it's a seamless operation.
---	if not Me.db.global.hidefailed then -- All errors are hidden and everything
---		                                -- happens in the background.
---*		print( "|cffff00ff<" .. L["Resending..."] .. ">" )
---	end
-	
 	Me.FireEvent( "SEND_RECOVER" )
 	
 	Me.ChatQueueNext()
@@ -1663,6 +1554,7 @@ Me.timers = {}
 Me.last_triggered = {}
 
 function Me.Timer_NotOnCD( slot, period )
+	if not Me.last_triggered[slot] then return true end
 	local time_to_next = (Me.last_triggered[slot] or (-period)) + period - GetTime()
 	if time_to_next <= 0 then
 		return true
@@ -1724,12 +1616,6 @@ function Me.Timer_Cancel( slot )
 		Me.timers[slot] = nil
 	end
 end
-
-
-Me.frame = Me.frame or CreateFrame( "Frame" )
-Me.frame:UnregisterAllEvents()
-Me.frame:RegisterEvent( "PLAYER_LOGIN" )
-Me.frame:SetScript( OnEvent, Me.OnGameEvent )
 
 -- See you on Moon Guard! :)
 --                ~              ~   The Great Sea ~                  ~
