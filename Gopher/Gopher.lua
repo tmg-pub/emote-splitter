@@ -202,26 +202,12 @@ Me.FAILURE_LIMIT = 5                           --
 Me.CHAT_TIMEOUT       = 10.0                          -- community messages.
 Me.CHAT_THROTTLE_WAIT = 3.0
 -------------------------------------------------------------------------------
--- The community API lets you send messages that are as long as 4000 
---  characters. The textboxes are still limited to 255 characters, but we bump 
---  this up to a nice 400 characters per message. If you have too big of a
---  value, then it just makes the user interface unmanagable, since you cannot
---  partially scroll past one of the messages. Each message is one scroll tick.
--- This is also a thing with BNet whispers. `OTHER` is the default value for
---  other chat types. The chunk size will be 
+-- How big to split chunks. The chunk size will be 
 --  `override[type] or default[type] or override.OTHER or default.OTHER`.
 Me.default_chunk_sizes = {
 	OTHER   = 255;
-	CLUB    = 400;
-	BNET    = 400;
-	GUILD   = 400;
-	OFFICER = 400;
 }
 
-if not C_Club then -- [7.x compat]
-	Me.default_chunk_sizes.GUILD   = nil
-	Me.default_chunk_sizes.OFFICER = nil
-end
 
 -------------------------------------------------------------------------------
 -- Any chat type keys found in here will override the chunk size for a certain 
@@ -257,6 +243,11 @@ Me.hide_failure_messages = true
 --  modding scene, things can get pretty hacky, and it helps a bit to allow
 --  others to mess with your code from the outside if they need to.
 -------------------------------------------------------------------------------
+-- The splitmarks are the marks that are added to the start or end of mesages
+--  to signal that they are being continued. If everything used the same one
+--                            one could even easily piece together messages.
+Me.splitmark_start = "»"
+Me.splitmark_end   = "»"
 
 Me.frame = Me.frame or CreateFrame( "Frame" )
 Me.frame:UnregisterAllEvents()
@@ -684,7 +675,9 @@ function Me.FireEventEx( event, start, ... )
 	local args = {...}
 	for index = start, #Me.event_hooks[event] do
 		table.insert( Me.hook_stack, Me.event_hooks[event][index] )
-		local args2 = { pcall( Me.event_hooks[event][index], event, unpack( args )) }
+		local args2 = {
+			pcall( Me.event_hooks[event][index], event, unpack( args ))
+		}
 		table.remove( Me.hook_stack )
 		
 		-- [1] is pcall status, [2] is first return value
@@ -787,7 +780,6 @@ function Me.AddChat( msg, chat_type, arg3, target, hook_start )
 				chat_type  = "CLUB"
 				arg3       = club_id
 				target     = stream_id
-				chunk_size = Me.club_chunk_size
 				chunk_size = Me.chunk_size_overrides.CLUB
 				              or Me.default_chunk_sizes.CLUB
 							  or Me.chunk_size_overrides.OTHER
@@ -800,7 +792,7 @@ function Me.AddChat( msg, chat_type, arg3, target, hook_start )
 		--  channels. GUILD and OFFICER are already using the Club API
 		--  internally at some point, and guilds have their own club ID
 		--  and streams.
-		if C_Club then -- 7.x compat
+		if C_Club then -- [7.x compat]
 			local club_id, stream_id = 
 				GetGuildStream( chat_type == "GUILD" 
 									and Enum.ClubStreamType.Guild 

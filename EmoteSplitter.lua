@@ -123,6 +123,26 @@ function Me:OnEnable()
 	Gopher.Listen( "THROTTLER_START", Me.Gopher_THROTTLER_START )
 	Gopher.Listen( "THROTTLER_STOP",  Me.Gopher_THROTTLER_STOP  )
 	
+	---------------------------------------------------------------------------
+	-- The community API and Battle.net whispers let you send messages that are
+	--  as long as 4000 characters. SendChatMessage is limited to 255
+	--  characters, but we bump the others up to a nice 400 characters. If you
+	--  have too big of a value, then it just makes the user interface 
+	--  unmanagable, since you cannot partially scroll past one of the
+	--  messages. Each message is one scroll tick. 
+	--  other chat types. The chunk size will be 
+	--  `override[type] or default[type] or override.OTHER or default.OTHER`.
+	Gopher.Internal.default_chunk_sizes.CLUB    = 400
+	Gopher.Internal.default_chunk_sizes.BNET    = 400
+	Gopher.Internal.default_chunk_sizes.GUILD   = 400
+	Gopher.Internal.default_chunk_sizes.OFFICER = 400
+	
+	if not C_Club then -- [7.x compat]
+		-- 7.x doesn't use GUILD and OFFICER like this.
+		Gopher.Internal.default_chunk_sizes.GUILD   = nil
+		Gopher.Internal.default_chunk_sizes.OFFICER = nil
+	end
+
 	-- Unlock the chat editboxes when they show.
 	hooksecurefunc( "ChatEdit_OnShow", Me.ChatEdit_OnShow ) 
 	
@@ -356,7 +376,7 @@ function Me.TonguesCompatibility()
 	--  special function SendChatFromHook...
 	
 	local inside_send_function = function( ... )
-		Gopher.AddChatFromStartEvent( ... )
+		Gopher.AddChatFromNewEvent( ... )
 	end
 	
 	local tongues_accepted_types = {

@@ -1,0 +1,22 @@
+#------------------------------------------------------------------------------
+# This secret file controls how popular editors will deal with things.
+# http://EditorConfig.org
+#------------------------------------------------------------------------------
+# This means the editor shouldn't search any higher than this directory.
+root = true
+#------------------------------------------------------------------------------
+# Base configuration for all files.
+[*]
+end_of_line  = crlf
+charset      = utf-8
+indent_style = tab
+indent_size  = 4
+#------------------------------------------------------------------------------
+# XML we use 2-space tabs.
+[*.xml]
+indent_size  = 2
+#------------------------------------------------------------------------------
+# .pkgmeta is YAML, a language which purposely doesn't support tabs.
+[.pkgmeta]
+indent_style = space
+indent_size  = 2

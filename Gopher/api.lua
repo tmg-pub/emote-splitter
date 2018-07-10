@@ -155,7 +155,7 @@ Gopher.StopListening = Internal.StopListening
 Gopher.GetEventListeners = Internal.GetEventHooks
 
 -------------------------------------------------------------------------------
--- Gopher.AddChatFromStartEvent( msg, chat_type, arg3, target )
+-- Gopher.AddChatFromNewEvent( msg, chat_type, arg3, target )
 --
 -- Sends chat from inside one of the CHAT_NEW handlers.  This  should  only  be
 --  used from "CHAT_NEW" listeners.
@@ -171,7 +171,7 @@ Gopher.GetEventListeners = Internal.GetEventHooks
 --  after where yours was.
 -- If  you  DO  want to make  a  completely fresh message that goes through the
 --       entire chain again, just make a direct call to the Blizzard functions.
-Gopher.AddChatFromStartEvent = Internal.AddChatFromStartEvent
+Gopher.AddChatFromNewEvent = Internal.AddChatFromStartEvent
 
 -------------------------------------------------------------------------------
 -- Gopher.Suppress()
