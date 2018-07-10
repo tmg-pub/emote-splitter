@@ -1,0 +1,14 @@
+#------------------------------------------------------------------------------
+# This secret file controls how popular editors will deal with things.
+# http://EditorConfig.org
+#------------------------------------------------------------------------------
+# Base configuration for all files.
+[*]
+end_of_line  = crlf
+charset      = utf-8
+indent_style = tab
+indent_size  = 4
+#------------------------------------------------------------------------------
+# XML we use 2-space tabs.
+[*.xml]
+indent_size  = 2
