@@ -282,7 +282,7 @@ end
 -------------------------------------------------------------------------------
 -- Call when certain options change that need to be passed to Gopher and such.
 function Me.Options_Apply()
-	Gopher.HideFailureMessages( Me.db.global.hide_failure_messages )
+	Gopher.HideFailureMessages( Me.db.global.hidefailed )
 	Gopher.SetSplitmarks( Me.db.global.premark, Me.db.global.postmark, true )
 end
 
