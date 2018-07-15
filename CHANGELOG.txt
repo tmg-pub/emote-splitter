@@ -1,7 +1,9 @@
 ## 1.5.0
-The majority of Emote Splitter has been transferred into an embeddable library (Gopher) so it can be included in other addons.
+Overhauled internal workings for flexibility. (Nothing you precious users need to worry about! This is mainly for Cross RP.)
 
 Added UCM support (rather than failing, it will disable UCM).
+
+French translations by bixxytwitch and SolanyaStormbreaker!
 
 
 ## 1.4.3

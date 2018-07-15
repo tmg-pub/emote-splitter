@@ -294,6 +294,8 @@ function Me.OnLogin()
 				return true -- from showing up.
 			end
 		end)
+	
+	Me.DebugLog( "Initialized." )
 end
 
 -------------------------------------------------------------------------------
@@ -679,9 +681,7 @@ function Me.FireEventEx( event, start, ... )
 			--  event args.
 		else
 			-- The hook errored
-			if Me.print_listener_errors then
-				print( ("Gopher Event Listener Error: %s"):format( args2[2] ))
-			end
+			Me.DebugLog( "Listener error.", args2[2] )
 		end
 	end
 	return unpack( args )
@@ -1188,8 +1188,17 @@ function Me.ChatQueueNext()
 			if not Me.channels_busy[channel] then
 				Me.Timer_Start( "gopher_channel_"..channel, "push", 
 				                       Me.CHAT_TIMEOUT, Me.ChatDeath, channel )
-				Me.CommitChat( q )
 				Me.channels_busy[channel] = q
+				-- Some of our error handlers can trigger immediately when you
+				--  try to send a chat message, like the club types or the
+				--  offline whisper notice for Bnet. In that case we obviously
+				--  don't want our failure handlers to treat it like a normal
+				--  failure - we aren't done in here yet.
+				Me.inside_chat_queue = true
+				Me.CommitChat( q )
+				Me.inside_chat_queue = false
+				-- If it errored above, the channels_busy entry will be cleared
+				--  again and allow us to continue.
 				if Me.AllChannelsBusy() then
 					break
 				end
@@ -1226,6 +1235,18 @@ end
 --  intense latency. We just want to reset completely to recover.
 function Me.ChatDeath() 
 	Me.FireEvent( "SEND_DEATH", Me.chat_queue )
+	
+	if Me.debug_mode then
+		Me.DebugLog( "Chat death!" )
+		print( "  Channels busy:", not not Me.channels_busy[1], 
+		                          not not Me.channels_busy[2] )
+		print( "  Copying chat queue to GOHPER_DUMP_CHATQUEUE." )
+		GOPHER_DUMP_CHATQUEUE = {}
+		
+		for _, v in ipairs( Me.chat_queue ) do
+			table.insert( GOPHER_DUMP_CHATQUEUE, v )
+		end
+	end
 	wipe( Me.chat_queue )
 	Me.sending_active = false
 	for i = 1, Me.NUM_CHANNELS do
@@ -1251,7 +1272,11 @@ function Me.ChatConfirmed( channel, skip_event )
 	--  timeout (see below).
 	Me.Timer_Cancel( "gopher_channel_"..channel )
 	
-	Me.ChatQueueNext()
+	-- This might be from inside of the chat queue for some types, like the
+	--  bnet offline inform which happens instantly.
+	if not Me.inside_chat_queue then
+		Me.ChatQueueNext()
+	end
 end
 
 -------------------------------------------------------------------------------
@@ -1263,7 +1288,7 @@ function Me.ChatFailed( channel )                         --  message.
 	--  through. There can be a large gap between the chat event and that
 	--  though, so we need to wait to see if we get the chat message still.
 	-- The amount of time we wait is at least CHAT_THROTTLE_WAIT (3) seconds, 
-	--  or more if they have high latency, a maximum of ten seconds. This might 
+	--  or more if they have high latency, a maximum of ten seconds. This might
 	--  be a bother to  people who get a lag spike though, so maybe we should 
 	--  limit this to be less? They DID get the chat throttled message after
 	--  all.
@@ -1353,6 +1378,12 @@ function Me.StopLatencyRecording()           -- latency value towards it
 	if not Me.latency_recording then return end      -- (only use 25%).
 	
 	local time = GetTime() - Me.latency_recording
+	
+	if time <= 0.001 then
+		-- Something went wrong and we stopped in the same frame.
+		Me.latency_recording = nil
+		return
+	end
 	
 	-- Of course we do assume that something is quite wrong if we have a
 	--  value greater than 10 seconds. Things like this have their pros and
@@ -1446,10 +1477,12 @@ end
 -- Our hook for when the client gets an error back from one of the community
 -- features.
 function Me.OnClubError( event, action, error, club_type )
-	if #Me.chat_queue == 0 then
+	if not Me.channels_busy[2] then
 		-- We aren't expecting anything.
 		return 
 	end
+	
+	Me.DebugLog( "Club error.", action, error, club_type )
 	
 	-- This will match the error that happens when you get throttled by the
 	--  server from sending chat messages too quickly. This error is vague
@@ -1619,6 +1652,12 @@ function Me.Timer_Cancel( slot )
 		Me.timers[slot].cancel = true
 		Me.timers[slot] = nil
 	end
+end
+
+function Me.DebugLog( ... )
+	if not Me.debug_mode then return end
+	
+	print( "[Gopher-Debug]", ... )
 end
 
 -- See you on Moon Guard! :)

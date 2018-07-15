@@ -125,6 +125,17 @@ local function UpdateBandwidth()
 end
 
 -------------------------------------------------------------------------------
+-- If the send calls error from invalid input for whatever reason (trying to
+--  programatically send invalid chat type or similar situation) then the state
+--                         of the throttler will be unstable, so we pcall them.
+local function SafeCall( api, ... )
+	local result, msg = pcall( api, ... )
+	if Me.debug_mode and not result then
+		Me.DebugLog( "Send API error.", msg )
+	end
+end
+
+-------------------------------------------------------------------------------
 -- This is the actual sending function, but it also has a bandwidth check.
 -- If there's enough bandwidth, it sends the chat message and then subtracts
 --  from the remaining bandwidth.
@@ -154,12 +165,12 @@ local function TryDispatchMessage( msg )
 	--  different underlying APIs.
 	if type == "BNET" then
 		-- Battle.net whisper.
-		Me.hooks.BNSendWhisper( msg.target, msg.msg )
+		SafeCall( Me.hooks.BNSendWhisper, msg.target, msg.msg )
 	elseif type == "CLUB" then
 		-- Community channel message.
 		-- Our SendChatMessage hook also directs community "CHANNEL" messages
 		--  to this chat type, as well as GUILD and OFFICER.
-		Me.hooks.ClubSendMessage( msg.arg3, msg.target, msg.msg )
+		SafeCall( Me.hooks.ClubSendMessage, msg.arg3, msg.target, msg.msg )
 	else
 		-- Otherwise, this is treated like a normal SendChatMessage message.
 		
@@ -169,7 +180,8 @@ local function TryDispatchMessage( msg )
 		if type == "SAY" or type == "EMOTE" or type == "YELL" then
 			Me.StartLatencyRecording()
 		end
-		Me.hooks.SendChatMessage( msg.msg, type, msg.arg3, msg.target )
+		SafeCall( Me.hooks.SendChatMessage, msg.msg, type, 
+		                                               msg.arg3, msg.target )
 	end
 	return true
 end
