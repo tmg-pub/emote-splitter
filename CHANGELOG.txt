@@ -1,7 +1,7 @@
 ## 1.5.0
-Overhauled internal workings for flexibility. (Nothing you precious users need to worry about! This is mainly for Cross RP.)
+Overhauled internal workings for flexibility. (Nothing you precious users need to worry about! This is mainly for Cross RP compatibility.)
 
-Added UCM support (rather than failing, it will disable UCM).
+Added UCM support (it will no longer shut down if UCM is installed).
 
 French translations by bixxytwitch and SolanyaStormbreaker!
 

@@ -379,4 +379,13 @@ Gopher.HideFailureMessages = Internal.HideFailureMessages
 Gopher.Timer_Start  = Internal.Timer_Start
 Gopher.Timer_Cancel = Internal.Timer_Cancel
 
+-------------------------------------------------------------------------------
+-- Enable or  disable debug mode,  which causes  some debug information  to  be
+--                      printed to chat, including errors from event listeners.
+function Gopher.Debug( setting )
+	if setting == nil then setting = true end
+	if setting == false then setting = nil end
+	Gopher.Internal.debug_mode = true
+end
+
 --~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
