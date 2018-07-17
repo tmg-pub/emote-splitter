@@ -1,5 +1,5 @@
 #------------------------------------------------------------------------------
-## Interface: 70300
+## Interface: 80000
 ## Title: Emote Splitter
 ## Version: 1.5.0
 ## Notes: Unlocks chatbox and splits long emotes.
