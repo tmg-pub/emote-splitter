@@ -24,7 +24,7 @@
 --      throttle library to ensure that outgoing chat is your #1 priority.
 -----------------------------------------------------------------------------^-
 
-local VERSION = 2
+local VERSION = 3
 
 if IsLoggedIn() then
 	error( "Gopher can't be loaded on demand!" )
