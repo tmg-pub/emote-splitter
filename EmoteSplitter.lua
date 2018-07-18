@@ -132,10 +132,12 @@ function Me:OnEnable()
 	--  messages. Each message is one scroll tick. 
 	--  other chat types. The chunk size will be 
 	--  `override[type] or default[type] or override.OTHER or default.OTHER`.
-	Gopher.Internal.default_chunk_sizes.CLUB    = 400
 	Gopher.Internal.default_chunk_sizes.BNET    = 400
-	Gopher.Internal.default_chunk_sizes.GUILD   = 400
-	Gopher.Internal.default_chunk_sizes.OFFICER = 400
+	Gopher.Internal.default_chunk_sizes.CLUB    = 400
+	if Gopher.Internal.clubs then
+		Gopher.Internal.default_chunk_sizes.GUILD   = 400
+		Gopher.Internal.default_chunk_sizes.OFFICER = 400
+	end
 	
 	if not C_Club then -- [7.x compat]
 		-- 7.x doesn't use GUILD and OFFICER like this.

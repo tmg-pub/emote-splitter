@@ -24,7 +24,7 @@
 --      throttle library to ensure that outgoing chat is your #1 priority.
 -----------------------------------------------------------------------------^-
 
-local VERSION = 1
+local VERSION = 2
 
 if IsLoggedIn() then
 	error( "Gopher can't be loaded on demand!" )
@@ -232,6 +232,24 @@ Me.hide_failure_messages = true
 --                            one could even easily piece together messages.
 Me.splitmark_start = "»"
 Me.splitmark_end   = "»"
+-------------------------------------------------------------------------------
+local QUEUED_TYPES = { -- These are the types that aren't passed directly to
+	SAY     = 1; --  the throttler for output. They're queued and sent
+	EMOTE   = 1; --  one at a time, so that we can verify if they went
+	YELL    = 1; --  through or not.
+	BNET    = 1;     
+	GUILD   = 2; -- We handle GUILD and OFFICER like this too since
+	OFFICER = 2; --  they're also treated like club channels in 8.0.
+	CLUB    = 2; -- Essentially, anything that can fail from throttle
+}                      --  or other issues should be put in here.
+-- In 1.4.2 we also have a few different queue types to send traffic with
+--  different handlers at the same time.
+
+-- [[7.x compat]] Remove this after 7.x; we don't handle GUILD/OFFICER like
+if not C_Club then             -- this.
+	QUEUED_TYPES.GUILD   = nil;
+	QUEUED_TYPES.OFFICER = nil;
+end
 
 Me.frame = Me.frame or CreateFrame( "Frame" )
 Me.frame:UnregisterAllEvents()
@@ -250,6 +268,16 @@ function Me.OnLogin()
 	Me.frame:RegisterEvent( "CHAT_MSG_SAY"   )
 	Me.frame:RegisterEvent( "CHAT_MSG_EMOTE" )
 	Me.frame:RegisterEvent( "CHAT_MSG_YELL"  )
+	
+	if C_Club then
+		Me.clubs = C_Club.IsEnabled()
+		if not Me.clubs then
+			-- Don't treat these like queued if we don't have the community
+			--  functions.
+			QUEUED_TYPES.GUILD   = nil;
+			QUEUED_TYPES.OFFICER = nil;
+		end
+	end
 	
 	if C_Club then -- 7.x compat
 		-- In 8.0, GUILD and OFFICER chat are no longer normie communication
@@ -776,7 +804,7 @@ function Me.AddChat( msg, chat_type, arg3, target, hook_start )
 		--  channels. GUILD and OFFICER are already using the Club API
 		--  internally at some point, and guilds have their own club ID
 		--  and streams.
-		if C_Club then -- [7.x compat]
+		if C_Club and Me.clubs then -- [7.x compat]
 			local club_id, stream_id = 
 				GetGuildStream( chat_type == "GUILD" 
 									and Enum.ClubStreamType.Guild 
@@ -1025,25 +1053,6 @@ function Me.SplitMessage( text, chunk_size, splitmark_start, splitmark_end,
 	end
 	
 	return chunks
-end
-			
--------------------------------------------------------------------------------
-local QUEUED_TYPES = { -- These are the types that aren't passed directly to
-	SAY     = 1; --  the throttler for output. They're queued and sent
-	EMOTE   = 1; --  one at a time, so that we can verify if they went
-	YELL    = 1; --  through or not.
-	BNET    = 1;     
-	GUILD   = 2; -- We handle GUILD and OFFICER like this too since
-	OFFICER = 2; --  they're also treated like club channels in 8.0.
-	CLUB    = 2; -- Essentially, anything that can fail from throttle
-}                      --  or other issues should be put in here.
--- In 1.4.2 we also have a few different queue types to send traffic with
---  different handlers at the same time.
-
--- [[7.x compat]] Remove this after 7.x; we don't handle GUILD/OFFICER like
-if not C_Club then             -- this.
-	QUEUED_TYPES.GUILD   = nil;
-	QUEUED_TYPES.OFFICER = nil;
 end
 
 -------------------------------------------------------------------------------
