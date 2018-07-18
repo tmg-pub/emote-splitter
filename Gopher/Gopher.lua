@@ -686,33 +686,33 @@ end
 
 function Me.FireEventEx( event, start, ... )
 	start = start or 1
-	local args = {...}
+	local a1, a2, a3, a4, a5, a6 = ...
 	for index = start, #Me.event_hooks[event] do
 		table.insert( Me.hook_stack, Me.event_hooks[event][index] )
-		local args2 = {
-			pcall( Me.event_hooks[event][index], event, unpack( args ))
-		}
+		local status, r1, r2, r3, r4, r5, r6 = 
+		   pcall( Me.event_hooks[event][index], event, a1, a2, a3, a4, a5, a6 )
+		
 		table.remove( Me.hook_stack )
 		
 		-- [1] is pcall status, [2] is first return value
-		if args2[1] then
+		if status then
 			-- If an event hook returns `false` then we cancel the chain.
-			if args2[2] == false then
+			if r1 == false then
 				return false
-			elseif args2[2] then
+			elseif r1 then
 				-- Otherwise, if it's non-nil, we assume that they're changing
 				--  the arguments on their end, so we replace them with the
-				args = args2 -- return values.
-				table.remove( args, 1 ) -- remove pcall status
+				--  return values.
+				a1, a2, a3, a4, a5, a6 = r1, r2, r3, r4, r5, r6
 			end
 			-- If the hook returned nil, then we don't do anything to the
 			--  event args.
 		else
 			-- The hook errored
-			Me.DebugLog( "Listener error.", args2[2] )
+			Me.DebugLog( "Listener error.", r1 )
 		end
 	end
-	return unpack( args )
+	return a1, a2, a3, a4, a5, a6
 end
 
 function Me.FireEvent( event, ... )
@@ -764,7 +764,6 @@ function Me.AddChat( msg, chat_type, arg3, target, hook_start )
 	msg = Me.SplitLines( msg )  -- of lines, or just { msg } if there aren't
 	                              --  any newlines.
 	chat_type = chat_type:upper()
-	
 	-- We do some work here in rerouting some messages to avoid using
 	--  SendChatMessage, specifically with ones that use the Club API. It's
 	--  probably sending it there internally, but we can do that ourselves
@@ -1249,7 +1248,7 @@ function Me.ChatDeath()
 		Me.DebugLog( "Chat death!" )
 		print( "  Channels busy:", not not Me.channels_busy[1], 
 		                          not not Me.channels_busy[2] )
-		print( "  Copying chat queue to GOHPER_DUMP_CHATQUEUE." )
+		print( "  Copying chat queue to GOPHER_DUMP_CHATQUEUE." )
 		GOPHER_DUMP_CHATQUEUE = {}
 		
 		for _, v in ipairs( Me.chat_queue ) do
@@ -1273,7 +1272,7 @@ function Me.ChatConfirmed( channel, skip_event )
 	Me.failures = 0
 	
 	if not skip_event then
-		Me.FireEvent( "SEND_CONFIRMED", unpack(Me.channels_busy[channel]) )
+		Me.FireEvent( "SEND_CONFIRMED", Me.channels_busy[channel] )
 	end
 	Me.channels_busy[channel] = nil
 	
@@ -1311,7 +1310,7 @@ function Me.ChatFailed( channel )                         --  message.
 		return
 	end
 	
-	Me.FireEvent( "SEND_FAIL", unpack(Me.channels_busy[channel]) )
+	Me.FireEvent( "SEND_FAIL", Me.channels_busy[channel] )
 	
 	-- With the 8.0 update, Emote Splitter also supports communities, which
 	--  give a more clear signal that the chat failed that's purely from
@@ -1332,7 +1331,7 @@ end
 -- For restarting the chat queue after a failure.
 --
 function Me.ChatFailedRetry( channel )
-	Me.FireEvent( "SEND_RECOVER", unpack(Me.channels_busy[channel]) )
+	Me.FireEvent( "SEND_RECOVER", Me.channels_busy[channel] )
 	Me.channels_busy[channel] = nil
 	Me.ChatQueueNext()
 end
