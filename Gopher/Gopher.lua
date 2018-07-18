@@ -24,7 +24,7 @@
 --      throttle library to ensure that outgoing chat is your #1 priority.
 -----------------------------------------------------------------------------^-
 
-local VERSION = 2
+local VERSION = 3
 
 if IsLoggedIn() then
 	error( "Gopher can't be loaded on demand!" )
@@ -90,6 +90,9 @@ Me.load    = true
 -- Confirmation: CHAT_MSG_GUILD, CHAT_MSG_OFFICER, 
 --                CHAT_MSG_COMMUNITIES_CHANNEL
 -- Failure: CLUB_ERROR
+-- Queue 3: DELETE/EDIT
+-- Confirmation: CLUB_MSG_UPDATED
+-- Failure: CLUB_ERROR
 --
 -- This is so that if you do SendChatMessage and then C_Club.SendMessage
 --  at the same time, we can send both of these messages together. It's
@@ -98,7 +101,7 @@ Me.load    = true
 Me.chat_queue    = {}
 Me.channels_busy = {}
 Me.message_id    = 1
-Me.NUM_CHANNELS  = 2
+Me.NUM_CHANNELS  = 3
 -------------------------------------------------------------------------------
 -- The way we dequeue is a little complex. It's not a plain FIFO anymore.
 -- Firstly we sort by priority, lower numbers are sent before higher numbers.
@@ -168,7 +171,7 @@ Me.hook_stack = {} -- Our stack for hooks in case we're nesting things with
 -- We count failures when we get a chat error. Some of the errors we get
 --  (particularly from the communities API) are vague, and we don't really
 --  know if we should keep re-sending. This limit is to stop resending after
-Me.failures = 0                                --  so many of those errors.
+Me.channel_failures = {}                       --  so many of those errors.
 Me.FAILURE_LIMIT = 5                           --
 -------------------------------------------------------------------------------
 -- Settings for the timers in the chat queue. CHAT_TIMEOUT is how much time it
@@ -241,7 +244,10 @@ local QUEUED_TYPES = { -- These are the types that aren't passed directly to
 	GUILD   = 2; -- We handle GUILD and OFFICER like this too since
 	OFFICER = 2; --  they're also treated like club channels in 8.0.
 	CLUB    = 2; -- Essentially, anything that can fail from throttle
-}                      --  or other issues should be put in here.
+	                       --  or other issues should be put in here.
+	CLUBEDIT   = 3; -- V3 adds these, which are basically delete and edit
+	CLUBDELETE = 3; --  tasks.
+}                      
 -- In 1.4.2 we also have a few different queue types to send traffic with
 --  different handlers at the same time.
 
@@ -283,9 +289,10 @@ function Me.OnLogin()
 		-- In 8.0, GUILD and OFFICER chat are no longer normie communication
 		--  channels. They're just routed into the community API internally.
 		Me.frame:RegisterEvent( "CHAT_MSG_COMMUNITIES_CHANNEL" )
-		Me.frame:RegisterEvent( "CHAT_MSG_GUILD"   )
-		Me.frame:RegisterEvent( "CHAT_MSG_OFFICER" )
-		Me.frame:RegisterEvent( "CLUB_ERROR"       )
+		Me.frame:RegisterEvent( "CHAT_MSG_GUILD"               )
+		Me.frame:RegisterEvent( "CHAT_MSG_OFFICER"             )
+		Me.frame:RegisterEvent( "CLUB_ERROR"                   )
+		Me.frame:RegisterEvent( "CLUB_MESSAGE_UPDATED"         )
 	end
 	
 	-- Battle.net whispers do have a throttle if you send too many, and they're
@@ -339,6 +346,8 @@ function Me.OnGameEvent( frame, event, ... )
 		Me.TryConfirm( "BNET", Me.PLAYER_GUID )
 	elseif event == "CLUB_ERROR" then
 		Me.OnClubError( event, ... )
+	elseif event == "CLUB_MESSAGE_UPDATED" then
+		Me.OnClubMessageUpdated( event, ... )
 	elseif event == "CHAT_MSG_BN_WHISPER_PLAYER_OFFLINE" then
 		Me.OnChatMsgBnOffline( event, ... )
 	elseif event == "CHAT_MSG_SYSTEM" then
@@ -530,6 +539,34 @@ function Me.QueueBreak( priority )
 	ChatQueueInsert({ 
 		type = "BREAK";
 		prio = priority;
+		id = Me.message_id;
+	})
+	Me.message_id = Me.message_id + 1
+end
+
+-------------------------------------------------------------------------------
+function Me.DeleteClubMessage( club, stream, message_id )
+	Me.QueueCustom( { 
+		msg  = ""; -- For the throttler. :)
+		arg3 = club;
+		target = stream;
+		type = "CLUBDELETE";
+		prio = 1;
+		cmid  = message_id;
+		id = Me.message_id;
+	})
+end
+
+-------------------------------------------------------------------------------
+function Me.EditClubMessage( club, stream, message_id, text )
+	Me.QueueCustom({
+		msg  = text;
+		arg3 = club;
+		target = stream;
+		type = "CLUBEDIT";
+		prio = 1;
+		cmid  = message_id;
+		id = Me.message_id;
 	})
 end
 
@@ -1123,6 +1160,14 @@ function Me.QueueChat( msg, type, arg3, target )
 	end                            --  messages out on the line.
 end
 
+function Me.QueueCustom( custom )
+	custom.id = Me.message_id
+	Me.message_id = Me.message_id + 1
+	ChatQueueInsert( custom )
+	if Me.queue_paused then return end
+	Me.StartQueue()
+end
+
 function Me.AnyChannelsBusy()
 	for i = 1, Me.NUM_CHANNELS do
 		if Me.channels_busy[i] then return true end
@@ -1270,10 +1315,10 @@ end
 --                            when we see we've gotten a "throttled" error.
 function Me.ChatConfirmed( channel, skip_event )
 	Me.StopLatencyRecording()
-	Me.failures = 0
+	Me.channel_failures[channel] = nil
 	
 	if not skip_event then
-		Me.FireEvent( "SEND_CONFIRMED", unpack(Me.channels_busy[channel]) )
+		Me.FireEvent( "SEND_CONFIRMED", Me.channels_busy[channel] )
 	end
 	Me.channels_busy[channel] = nil
 	
@@ -1305,8 +1350,8 @@ function Me.ChatFailed( channel )                         --  message.
 	-- We don't want to get stuck waiting forever if this error /isn't/ caused
 	--  by some sort of throttle, so we count the errors and die after waiting
 	--  for so many.
-	Me.failures = Me.failures + 1
-	if Me.failures >= Me.FAILURE_LIMIT then
+	Me.channel_failures[channel] = (Me.channel_failures[channel] or 0) + 1
+	if Me.channel_failures[channel] >= Me.FAILURE_LIMIT then
 		Me.ChatDeath()
 		return
 	end
@@ -1483,27 +1528,51 @@ function Me.OnChatMsgSystem( event, message, sender, _, _, target )
 end
 
 -------------------------------------------------------------------------------
+function Me.OnClubMessageUpdated( event, club, stream, message_id )
+	local c = Me.channels_busy[3]
+	-- We could also verify that message_id matches in our queue, but honestly
+	--  those message ids are WILD and I'm not sure if there's some sort of 
+	--  precision error that might come into play.
+	if club == c.arg3 and stream == c.target then
+		local info = C_Club.GetMessageInfo( club, stream, message_id )
+		-- This is a little bit iffy, because someone else could modify one
+		--  of your messages at the same time you're doing one of these tasks
+		--  and confuse it.
+		
+		if info.author.isSelf then
+			RemoveFromTable( Me.chat_queue, Me.channels_busy[3] )
+			Me.ChatConfirmed( 3 )
+		end
+	end
+end
+
+-------------------------------------------------------------------------------
 -- Our hook for when the client gets an error back from one of the community
 -- features.
 function Me.OnClubError( event, action, error, club_type )
-	if not Me.channels_busy[2] then
-		-- We aren't expecting anything.
-		return 
-	end
-	
 	Me.DebugLog( "Club error.", action, error, club_type )
 	
 	-- This will match the error that happens when you get throttled by the
 	--  server from sending chat messages too quickly. This error is vague
 	--  though and still matches some other things, like when the stream is
 	--  missing. Hopefully in the future the vagueness disappears so we know
-	--  what sort of error we're dealing with, but for now, we assume it is
-	--  a throttle, and then retry a number of times. We have a failure
-	--  counter that will stop us if we try too many times (where we assume
-	--  it's something else causing the error).
-	if action == Enum.ClubActionType.ErrorClubActionCreateMessage 
-	   and error == Enum.ClubErrorType.ErrorCommunitiesUnknown then
+	--  what sort of error we're dealing with, but for now, we assume it is a
+	--  throttle, and then retry a number of times. We have a failure counter
+	--  that will stop us if we try too many times (where we assume it's 
+	--  something else causing the error).
+	if Me.channels_busy[2]
+	        and action == Enum.ClubActionType.ErrorClubActionCreateMessage then
 		Me.ChatFailed( 2 )
+		return
+	end
+	
+	local c = Me.channels_busy[3]
+	if c.type == "CLUBEDIT" 
+	     and action == Enum.ClubActionType.ErrorClubActionEditMessage 
+	      or c.type == "CLUBDELETE" 
+	       and action == Enum.ClubActionType.ErrorClubActionDestroyMessage then
+		Me.ChatFailed( 3 )
+		return
 	end
 end
 

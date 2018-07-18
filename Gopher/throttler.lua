@@ -171,6 +171,10 @@ local function TryDispatchMessage( msg )
 		-- Our SendChatMessage hook also directs community "CHANNEL" messages
 		--  to this chat type, as well as GUILD and OFFICER.
 		SafeCall( Me.hooks.ClubSendMessage, msg.arg3, msg.target, msg.msg )
+	elseif type == "CLUBDELETE" then
+		SafeCall( C_Club.DestroyMessage, msg.arg3, msg.target, msg.cmid )
+	elseif type == "CLUBEDIT" then
+		SafeCall( C_Club.EditMessage, msg.arg3, msg.target, msg.cmid, msg.msg )
 	else
 		-- Otherwise, this is treated like a normal SendChatMessage message.
 		
