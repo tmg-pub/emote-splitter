@@ -1,3 +1,7 @@
+## 1.5.2
+Fix mainly for Misspelled compatibility and Battle.net whispers.
+
+
 ## 1.5.1
 Handles the communities being disabled for guild/officer chat.
 
