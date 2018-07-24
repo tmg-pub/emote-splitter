@@ -23,8 +23,10 @@ end
 -- Compatibility for UnlimitedChatMessage.
 --
 function Me.UCMCompatibility()
+	if Me.compatibility_ucm then return end
 	if not UCM then return end -- No UCM
 	if UCM.core.hooks.SendChatMessage then
+		Me.compatibility_ucm = true
 		-- Basically... we just shut down most of UCM. Just the chatbox
 		--  extension code is left.
 		UCM.core:Unhook( "SendChatMessage" )
@@ -35,11 +37,14 @@ end
 -- Handle compatibility for the Misspelled addon.
 --
 function Me.MisspelledCompatibility()
+	if Me.compatibility_misspelled then return end
 	if not Misspelled then return end
-	if not Misspelled.hooks and not Misspelled.hooks.SendChatMessage then 
+	if not Misspelled.hooks or not Misspelled.hooks.SendChatMessage then 
 		-- Something changed.
 		return
 	end
+	
+	Me.compatibility_misspelled = true
 	
 	-- The Misspelled addon inserts color codes that are removed in its own
 	--  hooks to SendChatMessage. This isn't ideal, because it can set up its
@@ -49,7 +54,7 @@ function Me.MisspelledCompatibility()
 	--  space.
 	-- What we do in here is unhook that code and then do it ourselves in one
 	Misspelled:Unhook( "SendChatMessage" )	      -- of our own chat filters. 
-	Gopher.Listen( "CHAT_NEW", function( event, text, ... )
+	Me.Listen( "CHAT_NEW", function( event, text, ... )
 		text = Misspelled:RemoveHighlighting( text )
 		return text, ...
 	end)
@@ -59,7 +64,10 @@ end
 -- This isn't /really/ compatible, as Tongues' protocol doesn't even support
 --  split messages.
 function Me.TonguesCompatibility()
+	if Me.compatibility_tongues then return end
 	if not Tongues then return end -- No Tongues.
+	
+	Me.compatibility_tongues = true
 	
 	-- First... we want to kill Tongues' SendChatMessage hook. All it does is 
 	--  pass execution to HandleSend. We'll unhook their SendChatMessage hook
@@ -92,7 +100,7 @@ function Me.TonguesCompatibility()
 	--  special function SendChatFromHook...
 	
 	local inside_send_function = function( ... )
-		Gopher.AddChatFromNewEvent( ... )
+		Me.AddChatFromStartEvent( ... )
 	end
 	
 	local tongues_accepted_types = {
@@ -110,7 +118,7 @@ function Me.TonguesCompatibility()
 		CHANNEL       = true;
 	}
 	
-	Gopher.Listen( "CHAT_NEW", function( event, msg, type, _, target )
+	Me.Listen( "CHAT_NEW", function( event, msg, type, _, target )
 		if not tongues_accepted_types[type:upper()] then
 			-- Don't send any special types through tongues.
 			return
