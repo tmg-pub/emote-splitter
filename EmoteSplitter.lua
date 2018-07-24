@@ -184,10 +184,6 @@ function Me:OnEnable()
 	
 	-- Initialize other modules here.
 	Me.EmoteProtection.Init()
-	
-	-- And then compatibility stuff.
-	Me.MisspelledCompatibility()
-	Me.TonguesCompatibility()
 end
 
 -------------------------------------------------------------------------------
