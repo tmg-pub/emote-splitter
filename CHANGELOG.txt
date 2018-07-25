@@ -1,3 +1,6 @@
+## 1.5.4
+German translations by Toxarion !
+
 ## 1.5.3
 Compatibility improvements.
 
