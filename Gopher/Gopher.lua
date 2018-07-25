@@ -24,7 +24,7 @@
 --      throttle library to ensure that outgoing chat is your #1 priority.
 -----------------------------------------------------------------------------^-
 
-local VERSION = 4
+local VERSION = 5
 
 if IsLoggedIn() then
 	error( "Gopher can't be loaded on demand!" )
@@ -1529,6 +1529,7 @@ end
 -------------------------------------------------------------------------------
 function Me.OnClubMessageUpdated( event, club, stream, message_id )
 	local c = Me.channels_busy[3]
+	if not c then return end
 	-- We could also verify that message_id matches in our queue, but honestly
 	--  those message ids are WILD and I'm not sure if there's some sort of 
 	--  precision error that might come into play.
@@ -1566,6 +1567,7 @@ function Me.OnClubError( event, action, error, club_type )
 	end
 	
 	local c = Me.channels_busy[3]
+	if not c then return end
 	if c.type == "CLUBEDIT" 
 	     and action == Enum.ClubActionType.ErrorClubActionEditMessage 
 	      or c.type == "CLUBDELETE" 
