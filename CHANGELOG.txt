@@ -1,7 +1,8 @@
-## 1.5.4
+## 1.5.5 / 1.5.4 / 1.5.3
+Bugfix for deleting/editing messages in communities.
+
 German translations by Toxarion !
 
-## 1.5.3
 Compatibility improvements.
 
 
