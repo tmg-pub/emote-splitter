@@ -24,7 +24,7 @@
 --      throttle library to ensure that outgoing chat is your #1 priority.
 -----------------------------------------------------------------------------^-
 
-local VERSION = 5
+local VERSION = 6
 
 if IsLoggedIn() then
 	error( "Gopher can't be loaded on demand!" )
@@ -265,7 +265,7 @@ Me.frame:RegisterEvent( "PLAYER_LOGIN" )
 -- Called after player login (or reload). Time to set things up.
 function Me.OnLogin()
 	-- Delay this a little so we give time for their own OnLogin to trigger.
-	C_Timer.After( 1.0, Me.AddCompatibilityLayers )
+	C_Timer.After( 0.01, Me.AddCompatibilityLayers )
 	Me.PLAYER_GUID = UnitGUID("player")
 	
 	-- Message hooking. These first ones are the public message types that we

@@ -8,12 +8,9 @@ local Me = LibGopher.Internal
 if not Me.load then return end
 
 -------------------------------------------------------------------------------
--- This is executed one second after PLAYER_LOGIN, so any addons should be
---                                                        initialized already.
+-- This is executed on the next frame after PLAYER_LOGIN, so any addons should 
+--                                                     be initialized already.
 function Me.AddCompatibilityLayers()
-	if Me.compat then return end
-	Me.compat = VERSION
-	
 	Me.UCMCompatibility()
 	Me.MisspelledCompatibility()
 	Me.TonguesCompatibility()
