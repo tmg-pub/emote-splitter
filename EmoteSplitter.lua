@@ -134,16 +134,16 @@ function Me:OnEnable()
 	--  `override[type] or default[type] or override.OTHER or default.OTHER`.
 	Gopher.Internal.default_chunk_sizes.BNET    = 400
 	Gopher.Internal.default_chunk_sizes.CLUB    = 400
-	if Gopher.Internal.clubs then
-		Gopher.Internal.default_chunk_sizes.GUILD   = 400
-		Gopher.Internal.default_chunk_sizes.OFFICER = 400
-	end
+--	if Gopher.Internal.clubs then
+--		Gopher.Internal.default_chunk_sizes.GUILD   = 400
+--		Gopher.Internal.default_chunk_sizes.OFFICER = 400
+--	end
 	
-	if not C_Club then -- [7.x compat]
-		-- 7.x doesn't use GUILD and OFFICER like this.
-		Gopher.Internal.default_chunk_sizes.GUILD   = nil
-		Gopher.Internal.default_chunk_sizes.OFFICER = nil
-	end
+--	if not C_Club then -- [7.x compat]
+--		-- 7.x doesn't use GUILD and OFFICER like this.
+--		Gopher.Internal.default_chunk_sizes.GUILD   = nil
+--		Gopher.Internal.default_chunk_sizes.OFFICER = nil
+--	end
 
 	-- Unlock the chat editboxes when they show.
 	hooksecurefunc( "ChatEdit_OnShow", Me.ChatEdit_OnShow ) 

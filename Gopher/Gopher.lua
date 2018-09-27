@@ -24,7 +24,7 @@
 --      throttle library to ensure that outgoing chat is your #1 priority.
 -----------------------------------------------------------------------------^-
 
-local VERSION = 6
+local VERSION = 7
 
 if IsLoggedIn() then
 	error( "Gopher can't be loaded on demand!" )
@@ -251,8 +251,8 @@ local QUEUED_TYPES = { -- These are the types that aren't passed directly to
 -- In 1.4.2 we also have a few different queue types to send traffic with
 --  different handlers at the same time.
 
--- [[7.x compat]] Remove this after 7.x; we don't handle GUILD/OFFICER like
-if not C_Club then             -- this.
+-- [[7.x compat]] We don't handle GUILD/OFFICER like this.
+if not C_Club then
 	QUEUED_TYPES.GUILD   = nil;
 	QUEUED_TYPES.OFFICER = nil;
 end
@@ -275,19 +275,12 @@ function Me.OnLogin()
 	Me.frame:RegisterEvent( "CHAT_MSG_EMOTE" )
 	Me.frame:RegisterEvent( "CHAT_MSG_YELL"  )
 	
-	if C_Club then
-		Me.clubs = C_Club.IsEnabled()
-		if not Me.clubs then
-			-- Don't treat these like queued if we don't have the community
-			--  functions.
-			QUEUED_TYPES.GUILD   = nil;
-			QUEUED_TYPES.OFFICER = nil;
-		end
-	end
-	
 	if C_Club then -- 7.x compat
 		-- In 8.0, GUILD and OFFICER chat are no longer normie communication
 		--  channels. They're just routed into the community API internally.
+		-- Sometimes the game uses the old guild channels though, as the 
+		--  Battle.net platform can go down sometimes, and it falls back to
+		--  the game's channels.
 		Me.frame:RegisterEvent( "CHAT_MSG_COMMUNITIES_CHANNEL" )
 		Me.frame:RegisterEvent( "CHAT_MSG_GUILD"               )
 		Me.frame:RegisterEvent( "CHAT_MSG_OFFICER"             )
@@ -306,18 +299,6 @@ function Me.OnLogin()
 	-- And finally we hook the system chat events, so we can catch when the
 	--                         system tells us that a message failed to send.
 	Me.frame:RegisterEvent( "CHAT_MSG_SYSTEM" )
-	
-	Me.hooks = {}
-	
-	-- Here's the main chat hooks for splitting messages.
-	Me.hooks.SendChatMessage = SendChatMessage
-	SendChatMessage          = Me.SendChatMessageHook
-	Me.hooks.BNSendWhisper   = BNSendWhisper
-	BNSendWhisper            = Me.BNSendWhisperHook
-	if C_Club then -- [7.x compat]
-		Me.hooks.ClubSendMessage = C_Club.SendMessage
-		C_Club.SendMessage       = Me.ClubSendMessageHook
-	end
 	
 	-- Here's where we add the feature to hide the failure messages in the
 	-- chat frames, the failure messages that the system sends when your
@@ -840,6 +821,7 @@ function Me.AddChat( msg, chat_type, arg3, target, hook_start )
 		--  channels. GUILD and OFFICER are already using the Club API
 		--  internally at some point, and guilds have their own club ID
 		--  and streams.
+		--[[
 		if C_Club and Me.clubs then -- [7.x compat]
 			local club_id, stream_id = 
 				GetGuildStream( chat_type == "GUILD" 
@@ -860,7 +842,7 @@ function Me.AddChat( msg, chat_type, arg3, target, hook_start )
 			chat_type  = "CLUB"
 			arg3       = club_id
 			target     = stream_id
-		end
+		end]]
 	end
 	
 	if Me.next_chunk_size then
@@ -1620,20 +1602,30 @@ end
 --
 function Me.OnChatMsgGuildOfficer( event, _,_,_,_,_,_,_,_,_,_,_, guid )
 
-	-- These are a fun couple of events, and very messy to deal with. Maybe the
-	--  API might get some improvements in the future, but as of right now
-	--  these show up without any sort of data what club channel they're coming
-	--  from. We just sort of gloss over everything.
+	-- 9/27/18 - As of today chatting to guild can end up in three events:
+	--   CHAT_MSG_GUILD
+	--   CHAT_MSG_OFFICER
+	--   CHAT_MSG_COMMUNITIES_CHANNEL
+	--
+	-- The third happens when you chat in a channel that isn't the standard
+	--  Guild/Officer channels that come with a guild. The first two can be
+	--  triggered by using the community chat or the normal chatbox chat.
+	--  CHAT_MSG_COMMUNITIES_CHANNEL is never used for the default guild
+	--  channels, despite the underlying system sharing the same community
+	--  setup. Sometimes clubs can go offline and then the game is probably
+	--  just using the old chat channels.
+	-- In VERSION 7 we also don't reroute to the community channels in the
+	--  splitter, as this allows better compatibility with other addons and
+	--  other corner cases (at the sacrifice of a larger character limit).
 	
 	local cq = Me.channels_busy[2]
 	if cq and guid == Me.PLAYER_GUID then
-		-- confirmed this channel
 		event = event:sub( 10 )
 		
-		-- Typically cq.type will always be CLUB for these, but we handle this
-		--  anyway.
+		-- `cq.type` /may/ be "CLUB", or "GUILD" or "OFFICER" depending on how
+		--  the user sent the message.
 		if (cq.type == event) 
-		   or (cq.type == "CLUB" and cq.arg3 == GetGuildClub()) then
+		        or (cq.type == "CLUB" and cq.arg3 == GetGuildClub()) then
 			RemoveFromTable( Me.chat_queue, cq )
 			Me.ChatConfirmed( 2 )
 		end
@@ -1660,6 +1652,43 @@ function Me.OnChatMsgCommunitiesChannel( event, _,_,_,_,_,_,_,_,_,_,_,
 	   or (bn_sender_id and bn_sender_id ~= 0 and BNIsSelf(bn_sender_id)) then
 		RemoveFromTable( Me.chat_queue, cq )
 		Me.ChatConfirmed( 2 )
+	end
+end
+
+-------------------------------------------------------------------------------
+-- Hooks
+-------------------------------------------------------------------------------
+-- VERSION 7: We hook the chat functions as soon as possible. This is riskier
+--  for future compatibility and may introduce some quirks, but this allows us
+--  finer control over the chat system, and better compatibility with other
+--  addons that hook the chat system directly to insert or remove text. Ideally
+--  those addons should be using Gopher hooks, but probably not a realistic
+--  expectation. For any addons that need special compatibility care, we add
+--                                            support in compatibility.lua.
+Me.hooks = Me.hooks or {}
+if not Me.hooks.SendChatMessage then
+	Me.hooks.SendChatMessage = SendChatMessage
+	-- We pass this through an anonymous function so that we can upgrade it
+	--  later. In other words we don't want a static reference to
+	--  SendChatMessageHook, because that function might change when we 
+	--  load a newer version.
+	function SendChatMessage( ... )
+		return Me.SendChatMessageHook(...)
+	end
+end
+if not Me.hooks.BNSendWhisper then
+	Me.hooks.BNSendWhisper = BNSendWhisper
+	function BNSendWhisper( ... )
+		return Me.BNSendWhisperHook(...)
+	end
+end
+
+if C_Club then -- [7.x compat]
+	if not Me.hooks.ClubSendMessage then
+		Me.hooks.ClubSendMessage = C_Club.SendMessage
+		C_Club.SendMessage = function( ... )
+			return Me.ClubSendMessageHook( ... )
+		end
 	end
 end
 
@@ -1733,6 +1762,7 @@ function Me.Timer_Cancel( slot )
 	end
 end
 
+-------------------------------------------------------------------------------
 function Me.DebugLog( ... )
 	if not Me.debug_mode then return end
 	
