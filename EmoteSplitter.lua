@@ -184,6 +184,7 @@ function Me:OnEnable()
 	
 	-- Initialize other modules here.
 	Me.EmoteProtection.Init()
+	--Me.ExtendTRPNPCChat()
 end
 
 -------------------------------------------------------------------------------
@@ -310,6 +311,89 @@ function Me.UnlockCommunitiesChat()
 	CommunitiesFrame.ChatEditBox:SetVisibleTextByteLimit( 0 )
 end
 
+-------------------------------------------------------------------------------
+-- Code for unlocking the TRP NPC frame.
+-- Note to TRP authors: if you want to disable this functionality (due to TRP
+--  doing something internally instead), set 
+--  `EmoteSpliter.Internal.disable_trp_npc_extension`.
+--
+function Me.ExtendTRPNPCChat()
+	if not TRP3_API then return end
+	if Me.disable_trp_npc_extension then
+		-- Another addon has disabled this, to handle it themselves.
+		return
+	end
+	
+	-- Callback for when the enter key is pressed or the send button is
+	--  clicked.
+	local function SendChat()
+		local name    = strtrim( TRP3_NPCTalk.name:GetText() )
+		local channel = TRP3_NPCTalk.channelDropdown:GetSelectedValue()
+		local msg     = TRP3_NPCTalk.messageText.scroll.text:GetText()
+		
+		-- Quit if there is no message or there isn't a name.
+		if #msg == 0 or #name == 0 then return end
+		
+		-- We're using TRP3's localization to get the "says:" string, etc.
+		local padding = ""
+		if channel == "MONSTER_SAY" then
+			padding = TRP3_API.loc.NPC_TALK_SAY_PATTERN .. " "
+		elseif channel == "MONSTER_YELL" then
+			padding = TRP3_API.loc.NPC_TALK_YELL_PATTERN .. " "
+		elseif channel == "MONSTER_WHISPER" then
+			padding = TRP3_API.loc.NPC_TALK_WHISPER_PATTERN .. " "
+		end
+		
+		-- Using Gopher's padding, to make it so that every split message is 
+		--  prefixed with the npc name and action string.
+		LibGopher.SetPadding( TRP3_API.chat.configNPCTalkPrefix()
+		                                            .. name .. " " .. padding )
+		print( msg )
+		-- Gopher will pick up SendChatMessage and split the message 
+		--  accordingly.
+		SendChatMessage( msg, "EMOTE" )
+		TRP3_NPCTalk.messageText.scroll.text:SetText( "" )
+	end
+	
+	-- Callback for when anything is modifying the potential text length. This
+	--  is also overwriting some other things like when the channel type is
+	--  changed.
+	local function OnTextChanged()
+		local hasname = #strtrim(TRP3_NPCTalk.name:GetText()) > 0
+		local hasmsg = #strtrim(TRP3_NPCTalk.messageText.scroll.text:GetText()) > 0
+		
+		if hasname and hasmsg then
+			TRP3_NPCTalk.send:Enable()
+		else
+			TRP3_NPCTalk.send:Disable()
+		end
+	end
+	
+	TRP3_API.events.listenToEvent( TRP3_API.events.WORKFLOW_ON_FINISH, 
+	                                                                 function()
+		-- Replace the NPC chat frame's scripts.
+		local send_button      = TRP3_NPCTalk.send
+		local channel_dropdown = TRP3_NPCTalk.channelDropdown
+		local message_text     = TRP3_NPCTalk.messageText.scroll.text
+		local npc_name         = TRP3_NPCTalk.name
+		
+		send_button:SetScript( "OnClick", SendChat )
+		message_text:SetScript( "OnEnterPressed", SendChat )
+		message_text:SetScript( "OnEnterPressed", SendChat )
+		
+		-- Todo: find a nice compatible way to overwrite the channel dropdown
+		--  callback.
+		channel_dropdown.callback = OnTextChanged
+		message_text:HookScript( "OnTextChanged", OnTextChanged )
+		message_text:HookScript( "OnEditFocusGained", OnTextChanged )
+		npc_name:HookScript( "OnTextChanged", OnTextChanged )
+		npc_name:HookScript( "OnEditFocusGained", OnTextChanged )
+		
+		-- Hide the character limit, since there isn't one anymore. Maybe we 
+		--  could just show the total characters?
+		TRP3_NPCTalk.charactersCounter:Hide()
+	end)
+end
 
 -- See you on Moon Guard! :)
 --                ~              ~   The Great Sea ~                  ~
