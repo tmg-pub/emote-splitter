@@ -1,5 +1,5 @@
 ## 1.5.7
-Patch 8.1 support.
+Patch 8.1 support (fixes Chat Failed when typing in community channels).
 
 
 ## 1.5.6
