@@ -1,3 +1,7 @@
+## 1.5.7
+Patch 8.1 support.
+
+
 ## 1.5.6
 This update should make Emote Splitter work better with other addons.
 

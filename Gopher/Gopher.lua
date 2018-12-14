@@ -24,7 +24,7 @@
 --      throttle library to ensure that outgoing chat is your #1 priority.
 -----------------------------------------------------------------------------^-
 
-local VERSION = 7
+local VERSION = 8
 
 if IsLoggedIn() then
 	error( "Gopher can't be loaded on demand!" )
@@ -281,11 +281,11 @@ function Me.OnLogin()
 		-- Sometimes the game uses the old guild channels though, as the 
 		--  Battle.net platform can go down sometimes, and it falls back to
 		--  the game's channels.
-		Me.frame:RegisterEvent( "CHAT_MSG_COMMUNITIES_CHANNEL" )
-		Me.frame:RegisterEvent( "CHAT_MSG_GUILD"               )
-		Me.frame:RegisterEvent( "CHAT_MSG_OFFICER"             )
-		Me.frame:RegisterEvent( "CLUB_ERROR"                   )
-		Me.frame:RegisterEvent( "CLUB_MESSAGE_UPDATED"         )
+		Me.frame:RegisterEvent( "CLUB_MESSAGE_ADDED"   )
+		Me.frame:RegisterEvent( "CHAT_MSG_GUILD"       )
+		Me.frame:RegisterEvent( "CHAT_MSG_OFFICER"     )
+		Me.frame:RegisterEvent( "CLUB_ERROR"           )
+		Me.frame:RegisterEvent( "CLUB_MESSAGE_UPDATED" )
 	end
 	
 	-- Battle.net whispers do have a throttle if you send too many, and they're
@@ -319,8 +319,10 @@ function Me.OnGameEvent( frame, event, ... )
 	if event == "CHAT_MSG_SAY" or event == "CHAT_MSG_EMOTE"
 	                                           or event == "CHAT_MSG_YELL" then
 		Me.TryConfirm( event:sub( 10 ), select( 12, ... ))
-	elseif event == "CHAT_MSG_COMMUNITIES_CHANNEL" then
-		Me.OnChatMsgCommunitiesChannel( event, ... )
+	elseif event == "CLUB_MESSAGE_ADDED" then
+		-- Version 8: Using CLUB_MESSAGE_ADDED instead of old event (which
+		--  doesn't trigger all the time anymore).
+		Me.OnClubMessageAdded( event, ... )
 	elseif event == "CHAT_MSG_GUILD" or event == "CHAT_MSG_OFFICER" then
 		Me.OnChatMsgGuildOfficer( event, ... )
 	elseif event == "CHAT_MSG_BN_WHISPER_INFORM" then
@@ -1650,6 +1652,23 @@ function Me.OnChatMsgCommunitiesChannel( event, _,_,_,_,_,_,_,_,_,_,_,
 	--  changes in the future.
 	if (guid and guid == Me.PLAYER_GUID)
 	   or (bn_sender_id and bn_sender_id ~= 0 and BNIsSelf(bn_sender_id)) then
+		RemoveFromTable( Me.chat_queue, cq )
+		Me.ChatConfirmed( 2 )
+	end
+end
+
+-------------------------------------------------------------------------------
+-- 12/11/18, VERSION 8: Club channels that aren't added to the chatbox no
+--  longer trigger CHAT_MSG_COMMUNITIES_CHANNEL. We need to handle them through
+--  this (more convoluted) event.
+--
+function Me.OnClubMessageAdded( event, club_id, stream_id, message_id )
+	local cq = Me.channels_busy[2]
+	if not cq then return end
+	
+	local message = C_Club.GetMessageInfo( club_id, stream_id, message_id )
+	if cq.type == "CLUB" and cq.arg3 == club_id and cq.target == stream_id 
+	                                             and message.author.isSelf then
 		RemoveFromTable( Me.chat_queue, cq )
 		Me.ChatConfirmed( 2 )
 	end
