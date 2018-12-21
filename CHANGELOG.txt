@@ -1,3 +1,7 @@
+## 1.5.8
+Fix for community channels added to chatbox.
+
+
 ## 1.5.7
 Patch 8.1 support (fixes Chat Failed when typing in community channels).
 

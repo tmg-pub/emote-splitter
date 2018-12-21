@@ -24,7 +24,7 @@
 --      throttle library to ensure that outgoing chat is your #1 priority.
 -----------------------------------------------------------------------------^-
 
-local VERSION = 8
+local VERSION = 9
 
 if IsLoggedIn() then
 	error( "Gopher can't be loaded on demand!" )
@@ -282,6 +282,7 @@ function Me.OnLogin()
 		--  Battle.net platform can go down sometimes, and it falls back to
 		--  the game's channels.
 		Me.frame:RegisterEvent( "CLUB_MESSAGE_ADDED"   )
+		Me.frame:RegisterEvent( "CHAT_MSG_COMMUNITIES_CHANNEL" )
 		Me.frame:RegisterEvent( "CHAT_MSG_GUILD"       )
 		Me.frame:RegisterEvent( "CHAT_MSG_OFFICER"     )
 		Me.frame:RegisterEvent( "CLUB_ERROR"           )
@@ -323,6 +324,9 @@ function Me.OnGameEvent( frame, event, ... )
 		-- Version 8: Using CLUB_MESSAGE_ADDED instead of old event (which
 		--  doesn't trigger all the time anymore).
 		Me.OnClubMessageAdded( event, ... )
+	elseif event == "CLUB_MESSAGE_ADDED" then
+		-- Version 9: Using this for channels in chatbox.
+		Me.OnChatMsgCommunitiesChannel( event, ... )
 	elseif event == "CHAT_MSG_GUILD" or event == "CHAT_MSG_OFFICER" then
 		Me.OnChatMsgGuildOfficer( event, ... )
 	elseif event == "CHAT_MSG_BN_WHISPER_INFORM" then
@@ -776,7 +780,7 @@ function Me.AddChat( msg, chat_type, arg3, target, hook_start )
 		
 	if msg == false then
 		Me.ResetState()
-		return 
+		return
 	end
 	
 	-- Now we cut this message up into potentially several pieces. First we're
@@ -799,23 +803,22 @@ function Me.AddChat( msg, chat_type, arg3, target, hook_start )
 		--  user can be typing in a chat channel that's linked to a community
 		--  channel. This is only done through the normal chatbox. If you type
 		--  in the community panel, it goes straight to C_Club:SendMessage.
-		local _, channel_name = GetChannelName( target )
-		if channel_name then
+		local _, channel_name,_, is_club = GetChannelName( target )
+		if channel_name and is_club then
 			-- GetChannelName returns a specific string for club channels:
 			--   Community:<club ID>:<stream ID>
 			local club_id, stream_id = 
 			                      channel_name:match( "Community:(%d+):(%d+)" )
-			if club_id then
-				-- This is a community message, reroute this message to use
-				--  C_Club directly...
-				chat_type  = "CLUB"
-				arg3       = club_id
-				target     = stream_id
-				chunk_size = Me.chunk_size_overrides.CLUB
-				              or Me.default_chunk_sizes.CLUB
-							  or Me.chunk_size_overrides.OTHER
-							  or Me.default_chunk_sizes.OTHER
-			end
+			
+			-- This is a community message, reroute this message to use
+			--  C_Club directly...
+			chat_type  = "CLUB"
+			arg3       = tonumber(club_id)
+			target     = tonumber(stream_id)
+			chunk_size = Me.chunk_size_overrides.CLUB
+						  or Me.default_chunk_sizes.CLUB
+						  or Me.chunk_size_overrides.OTHER
+						  or Me.default_chunk_sizes.OTHER
 		end
 	elseif chat_type == "GUILD" or chat_type == "OFFICER" then
 		-- For GUILD and OFFICER, we want to reroute these too to use the
@@ -1667,6 +1670,7 @@ function Me.OnClubMessageAdded( event, club_id, stream_id, message_id )
 	if not cq then return end
 	
 	local message = C_Club.GetMessageInfo( club_id, stream_id, message_id )
+	
 	if cq.type == "CLUB" and cq.arg3 == club_id and cq.target == stream_id 
 	                                             and message.author.isSelf then
 		RemoveFromTable( Me.chat_queue, cq )
