@@ -352,6 +352,53 @@ Gopher.ThrottlerActive = Internal.ThrottlerActive
 Gopher.HideFailureMessages = Internal.HideFailureMessages
 
 -------------------------------------------------------------------------------
+-- Gopher.AddMetadata( prefix, text, [perchunk] )
+-- Gopher.AddMetadata( function, arg, [perchunk] )
+--
+-- Certain messages  can have  metadata attached.  This should only be used for
+--  non-queued types that are guaranteed to go through  such as normal whispers
+--  and party chat. `prefix`  is the addon data prefix used. `text` is the text
+--  to send (which must be 255 bytes or less).
+-- Basically  these args  are passed  to  SendAddonMessage, with the `kind` and
+--  `target` fields of that matching the SendChatMessage arguments used.
+-- This data  will always  be  received before the other end processes the chat
+--  message that's attached to it. `perchunk`  will make it so that the data is
+--  duplicated/re-sent  for  each chunk  delivered.  If it's  not set, then the
+--  metadata will only be sent once, for the very next chunk.
+-- Example, with perchunk set for a message that's split  into two  chunks, the
+--  events will look like this:
+--    CHAT_MSG_ADDON (metadata)
+--    CHAT_MSG_RAID  (message chunk 1)
+--    CHAT_MSG_ADDON (same metadata) <- omitted if perchunk is false
+--    CHAT_MSG_RAID  (message chunk 2)
+-- The reason this function exists is for coupling the data like that.
+--  SendChatMessage  is  hooked  and  throttled, so  it's not guaranteed that a
+--  normal  SendAddonMessage  call  will  actually  be  called right before the
+--  desired SendChatMessage call to couple the data together.
+-- For example:
+--     SendChatMessage( "hello", "RAID" )
+--     SendAddonMessage( "prefix1", "secret data", "RAID" )
+--     SendChatMessage( "world", "RAID" )
+--   On the receiving end, the events might look like
+--     CHAT_MSG_ADDON ("prefix1", "secret data")
+--     CHAT_MSG_RAID ("hello")
+--     CHAT_MSG_RAID ("world")
+--   due to the first RAID message being queued when the throttler is busy.
+--   For the desired result of having the metadata attached to a  raid message,
+--    it should look like this:
+--     SendChatMessage( "hello", "RAID" )
+--     Gopher.AddMetadata( "prefix1", "secret data" )
+--     SendChatMessage( "world", "RAID" )
+--   The metadata will automatically copy the  next chat message's distribution
+--    type.
+-- If  a  `function`  is  specified,   then   Gopher   doesn't   actually   use
+--  SendAddonMessage, and instead calls this function, assuming that it will do
+--  so. This function should return how many bytes of data are sent, for proper
+--  load throttling. Note that the function is called with pcall, and to debug,
+--                                              you need to use Gopher.Debug().
+Gopher.AddMetadata = Internal.AddMetadata
+
+-------------------------------------------------------------------------------
 -- Gopher.Timer_Start( slot, mode, period, func, ... )
 -- Gopher.Timer_Cancel( slot )
 --

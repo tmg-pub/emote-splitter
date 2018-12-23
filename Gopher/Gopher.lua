@@ -24,7 +24,7 @@
 --      throttle library to ensure that outgoing chat is your #1 priority.
 -----------------------------------------------------------------------------^-
 
-local VERSION = 9
+local VERSION = 10
 
 if IsLoggedIn() then
 	error( "Gopher can't be loaded on demand!" )
@@ -195,7 +195,6 @@ Me.default_chunk_sizes = {
 	OTHER   = 255;
 }
 
-
 -------------------------------------------------------------------------------
 -- Any chat type keys found in here will override the chunk size for a certain 
 --  chat type. This is especially used by Cross RP for custom fake chat types 
@@ -256,7 +255,17 @@ if not C_Club then
 	QUEUED_TYPES.GUILD   = nil;
 	QUEUED_TYPES.OFFICER = nil;
 end
+-------------------------------------------------------------------------------
+-- Metadata is addon data that's coupled with text messages. For example, you
+--  can add metadata to a raid message, and it appears as an addon message
+--  right before it. The game guarantees that this data will always be seen
+--                                                  before the chat message.
+Me.metadata = {
+	-- Each entry is a table that contains:
+	-- 
+}
 
+-------------------------------------------------------------------------------
 Me.frame = Me.frame or CreateFrame( "Frame" )
 Me.frame:UnregisterAllEvents()
 Me.frame:RegisterEvent( "PLAYER_LOGIN" )
@@ -626,6 +635,22 @@ function Me.GetPadding()
 end
 
 -------------------------------------------------------------------------------
+-- Certain messages can have metadata attached. Only allowed for non-queued
+--  types that are guaranteed to go through, like normal whispers and party
+--  chat. `prefix` is the addon data prefix used. `text` is the text to send
+--  which must be 255 bytes or less.
+-- This data will always be received before the other end processes the chat
+--  message that's attached to it. `perchunk` will make it so that the data is
+--  duplicated/re-sent for each chunk delivered. If it's not set, then the
+--                  metadata will only be sent once, for the very next chunk.
+function Me.AddMetadata( prefix, text, perchunk )
+	local m = Me.metadata
+	m[#m+1] = prefix
+	m[#m+1] = text
+	m[#m+1] = perchunk
+end
+
+-------------------------------------------------------------------------------
 -- Function for splitting text on newlines or newline markers (literal "\n").
 --
 -- Returns a table of lines found in the text {line1, line2, ...}. Doesn't 
@@ -751,6 +776,7 @@ function Me.ResetState()
 	Me.splitmark_start_temp = nil
 	Me.chunk_prefix         = nil
 	Me.chunk_suffix         = nil
+	wipe( Me.metadata )
 end
 
 -------------------------------------------------------------------------------
@@ -1140,10 +1166,46 @@ function Me.QueueChat( msg, type, arg3, target )
 		
 		Me.StartQueue()
 		
-	else -- For other message types like party, raid, whispers, channels, we
-		 -- aren't going to be affected by the server throttler, so we go
-		Me.CommitChat( msg_pack )  -- straight to putting these
-	end                            --  messages out on the line.
+	else
+		-- For other message types like party, raid, whispers, channels, we
+		--  aren't going to be affected by the server throttler, so we go
+		--                 straight to putting these messages out on the line.
+		-- New in v10: metadata. For each non-queued message that's sent, there
+		--  may be metadata that's attached. By principle of the design/system,
+		--  this can't really be used on queued messages, because then you're
+		--                       mixing guaranteed/non-guaranteed deliveries.
+		if #Me.metadata > 0 then
+			-- Metadata is stored under the `meta` key of each message pack.
+			-- The contents are a list of `prefix` and `text` pairs, for 
+			--  SendAddonMessage.
+			local meta    = {}
+			local source  = Me.metadata
+			msg_pack.meta = meta
+			
+			local i = 1
+			while i <= #source do
+				-- The metadata source table is currently 3 entries per set.
+				-- [i+0] and [i+1] is the addon message prefix and text, and is
+				--                                stored in the message pack.
+				meta[#meta+1] = source[i]
+				meta[#meta+1] = source[i+1]
+				
+				-- [i+2] is a flag to copy the data for each chunk sent, so the
+				--  data appears on the receiving end before each CHAT_MSG
+				--  event, rather than just the first one.
+				if not source[i+2] then
+					-- If it's not removed here, then it will be removed when
+					--  ResetState() is called after everything is queued.
+					table.remove( source, i )
+					table.remove( source, i )
+					table.remove( source, i )
+				else
+					i = i + 3
+				end
+			end
+		end
+		Me.CommitChat( msg_pack )
+	end                            
 end
 
 function Me.QueueCustom( custom )

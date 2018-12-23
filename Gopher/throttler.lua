@@ -129,9 +129,13 @@ end
 --  programatically send invalid chat type or similar situation) then the state
 --                         of the throttler will be unstable, so we pcall them.
 local function SafeCall( api, ... )
-	local result, msg = pcall( api, ... )
+	local result, a = pcall( api, ... )
 	if Me.debug_mode and not result then
-		Me.DebugLog( "Send API error.", msg )
+		Me.DebugLog( "Send API error.", a )
+	end
+	
+	if result then
+		return a
 	end
 end
 
@@ -157,23 +161,23 @@ local function TryDispatchMessage( msg )
 		return false
 	end
 	
-	local type = msg.type
+	local msgtype = msg.type
 	
 	Me.bandwidth = Me.bandwidth - size
 	
 	-- We also handle parsing the message type and then routing it to the
 	--  different underlying APIs.
-	if type == "BNET" then
+	if msgtype == "BNET" then
 		-- Battle.net whisper.
 		SafeCall( Me.hooks.BNSendWhisper, msg.target, msg.msg )
-	elseif type == "CLUB" then
+	elseif msgtype == "CLUB" then
 		-- Community channel message.
 		-- Our SendChatMessage hook also directs community "CHANNEL" messages
 		--  to this chat type, as well as GUILD and OFFICER.
 		SafeCall( Me.hooks.ClubSendMessage, msg.arg3, msg.target, msg.msg )
-	elseif type == "CLUBDELETE" then
+	elseif msgtype == "CLUBDELETE" then
 		SafeCall( C_Club.DestroyMessage, msg.arg3, msg.target, msg.cmid )
-	elseif type == "CLUBEDIT" then
+	elseif msgtype == "CLUBEDIT" then
 		SafeCall( C_Club.EditMessage, msg.arg3, msg.target, msg.cmid, msg.msg )
 	else
 		-- Otherwise, this is treated like a normal SendChatMessage message.
@@ -181,11 +185,34 @@ local function TryDispatchMessage( msg )
 		-- For public chats that can trigger the server throttle, we measure
 		--  the latency to help us out in severe situations where the client
 		--  is nearly disconnecting (this helps to avoid double-posting).
-		if type == "SAY" or type == "EMOTE" or type == "YELL" then
+		if msgtype == "SAY" or msgtype == "EMOTE" or msgtype == "YELL" then
 			Me.StartLatencyRecording()
 		end
-		SafeCall( Me.hooks.SendChatMessage, msg.msg, type, 
-		                                               msg.arg3, msg.target )
+		
+		-- Some chat types shouldn't allow metadata, but maybe there might be
+		--  some odd use-case for it later?
+		local meta = msg.meta
+		if meta then
+			-- Basically if the meta field is set, this message has metadata
+			--  attached, and it comes in an array of pairs of entries that
+			--  are `prefix` and `text`. The metadata chat type and target 
+			--  mimic where the actual chat is going, and WoW guarantees that
+			--  the metadata will always be received before the chat, so long
+			--  as the call is made first.
+			for i = 1, #meta, 2 do
+				if type(meta[i]) == "function" then
+					Me.bandwidth =
+					       Me.bandwidth - (SafeCall( meta[i], meta[i+1] ) or 0)
+				else
+					SafeCall( C_ChatInfo.SendAddonMessage, meta[i], meta[i+1], 
+				                                          msgtype, msg.target )
+					Me.bandwidth = Me.bandwidth - #meta[i] - #meta[i+1]
+				end
+			end
+		end
+		
+		SafeCall( Me.hooks.SendChatMessage, msg.msg, msgtype, 
+		                                                 msg.arg3, msg.target )
 	end
 	return true
 end
