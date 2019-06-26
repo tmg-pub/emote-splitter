@@ -1,3 +1,7 @@
+## 1.5.9
+Update for Patch 8.2.
+
+
 ## 1.5.8
 Fix for community channels added to chatbox.
 
