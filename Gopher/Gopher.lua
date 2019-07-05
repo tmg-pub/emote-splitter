@@ -24,7 +24,7 @@
 --      throttle library to ensure that outgoing chat is your #1 priority.
 -----------------------------------------------------------------------------^-
 
-local VERSION = 10
+local VERSION = 11
 
 if IsLoggedIn() then
 	error( "Gopher can't be loaded on demand!" )
@@ -690,7 +690,7 @@ end
 -- main AddChat function.
 --
 function Me.SendChatMessageHook( msg, chat_type, language, channel )
-	Me.AddChat( msg, chat_type, language, channel )
+	Me.AddChat( msg, chat_type or "SAY", language, channel )
 end
 
 function Me.BNSendWhisperHook( presence_id, message_text ) 
