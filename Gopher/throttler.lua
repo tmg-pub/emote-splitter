@@ -174,6 +174,7 @@ local function TryDispatchMessage( msg )
 		-- Community channel message.
 		-- Our SendChatMessage hook also directs community "CHANNEL" messages
 		--  to this chat type, as well as GUILD and OFFICER.
+      Me.addon_action_blocked = false
 		SafeCall( Me.hooks.ClubSendMessage, msg.arg3, msg.target, msg.msg )
 	elseif msgtype == "CLUBDELETE" then
 		SafeCall( C_Club.DestroyMessage, msg.arg3, msg.target, msg.cmid )
@@ -211,6 +212,7 @@ local function TryDispatchMessage( msg )
 			end
 		end
 		
+      Me.addon_action_blocked = false
 		SafeCall( Me.hooks.SendChatMessage, msg.msg, msgtype, 
 		                                                 msg.arg3, msg.target )
 	end
