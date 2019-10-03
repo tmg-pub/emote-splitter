@@ -145,6 +145,9 @@ function Me:OnEnable()
 --		Gopher.Internal.default_chunk_sizes.OFFICER = nil
 --	end
 
+	-- Localize the continuation prompt label.
+	Gopher.Internal.continue_frame_label = L["Press enter to continue."]
+
 	-- Unlock the chat editboxes when they show.
 	hooksecurefunc( "ChatEdit_OnShow", Me.ChatEdit_OnShow ) 
 	

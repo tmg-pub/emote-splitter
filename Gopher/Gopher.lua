@@ -271,6 +271,10 @@ Me.frame:UnregisterAllEvents()
 Me.frame:RegisterEvent( "PLAYER_LOGIN" )
 
 -------------------------------------------------------------------------------
+-- Setting this early so that we can localize it during PLAYER_LOGIN.
+Me.continue_frame_label = "Press enter to continue."
+
+-------------------------------------------------------------------------------
 -- Called after player login (or reload). Time to set things up.
 function Me.OnLogin()
    -- Delay this a little so we give time for their own OnLogin to trigger.
@@ -348,13 +352,13 @@ function Me.SetupContinueFrame()
 
    local text = Me.continue_frame.text
    text:SetFontObject( GameFontNormal )
-   text:SetText( "Press enter to continue." )
    text:SetAllPoints()
 end
 
 -------------------------------------------------------------------------------
 function Me.ShowContinueFrame()
    Me.continue_frame:Show()
+   Me.continue_frame.text:SetText( Me.continue_frame_label )
 end
 
 -------------------------------------------------------------------------------

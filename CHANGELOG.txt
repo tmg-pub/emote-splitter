@@ -1,3 +1,9 @@
+## 1.6.0
+Update for Patch 8.2.5.
+
+/say messages no longer can be automatically queued due to some protection introduced in the latest patch. They now require user interaction to send, and so Emote Splitter shows a small prompt near your chatbox to continue sending your message when using restricted chat types. A new minor annoyance!
+
+
 ## 1.5.9
 Update for Patch 8.2.
 
