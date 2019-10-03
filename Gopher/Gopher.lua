@@ -1811,42 +1811,46 @@ function Me.OnClubMessageAdded( event, club_id, stream_id, message_id )
    end
 end
 
-function Me.IsInWorld()
-   
-end
-
 -------------------------------------------------------------------------------
 -- Returns true if the message queue has entries that need hardware events to
 --  send, such as /say in the open world (8.2.5).
 function Me.HasProtectedMessagesQueued()
-   if IsInInstance() then return end
-   
    for _, q in pairs( Me.chat_queue ) do
-      for k, v in pairs( q ) do
-         if v.type == "SAY" or v.type == "YELL" or v.type == "CHANNEL" then
-            return true
-         end
+      if ((q.type == "SAY" or q.type == "YELL") and not IsInInstance())
+                                or q.type == "CHANNEL" or q.type == "CLUB" then
+         return true
       end
    end
 end
 
-Me.blockchat = true
 -------------------------------------------------------------------------------
+-- We hook when the chatbox is opened to use as a trigger for continuing the
+--  chat message queue when sending protected messages. This is a post hook so
+--  we aren't adding unnecessary taint to the UI, and we just close the chat
+--  edit box if we want to block it.
 function Me.OnOpenChat( ... )
-   if Me.HasProtectedMessagesQueued() then
-      ACTIVE_CHAT_EDIT_BOX:Hide()
+   if Me.HasProtectedMessagesQueued() or Me.prompt_continue then
+      if ACTIVE_CHAT_EDIT_BOX then
+         ACTIVE_CHAT_EDIT_BOX:Hide()
+      end
       
-      if Me.prompt_continue then
+      -- The community frame uses this to steal focus from the normal chatbox.
+      -- Instead of the normal chat edit box appearing, it instead sets the
+      --  focus to this, or the community panel input.
+      if CHAT_FOCUS_OVERRIDE then
+         CHAT_FOCUS_OVERRIDE:ClearFocus()
+      end
+      
+      if Me.prompt_continue and Me.ThrottlerHealth() > 30 then
          Me.prompt_continue = false
          Me.HideContinueFrame()
-         Me.triggered_from_keystroke = true
-         
-         Me.triggered_from_keystroke = false
+         Me.PipeThrottlerKeystroke()
       end
       
    end
 end
 
+-------------------------------------------------------------------------------
 function Me.PromptForContinue()
    Me.prompt_continue = true
    Me.ShowContinueFrame()

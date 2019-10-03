@@ -158,8 +158,10 @@ local function TryDispatchMessage( msg )
 		--  we're near the peak BURST. This is to account for sending
 		--  max-length messages (4000 bytes) when our burst is only 2000
 		--  or 1000.
-		return false
+		return "WAIT"
 	end
+   
+   local hardware = Me.inside_hook or Me.triggered_from_keystroke
 	
 	local msgtype = msg.type
 	
@@ -174,20 +176,33 @@ local function TryDispatchMessage( msg )
 		-- Community channel message.
 		-- Our SendChatMessage hook also directs community "CHANNEL" messages
 		--  to this chat type, as well as GUILD and OFFICER.
+      if not hardware then return "PROMPT" end
+      
       Me.addon_action_blocked = false
 		SafeCall( Me.hooks.ClubSendMessage, msg.arg3, msg.target, msg.msg )
       if Me.addon_action_blocked then
          -- Going to lose some bandwidth here, but whatever.
-         Me.PromptForContinue()
-         return false
+         return "PROMPT"
       end
       
 	elseif msgtype == "CLUBDELETE" then
+      -- These probably need safety checks for the new 8.2.5 stuff, but
+      --  they don't really have use cases currently.
 		SafeCall( C_Club.DestroyMessage, msg.arg3, msg.target, msg.cmid )
 	elseif msgtype == "CLUBEDIT" then
 		SafeCall( C_Club.EditMessage, msg.arg3, msg.target, msg.cmid, msg.msg )
 	else
 		-- Otherwise, this is treated like a normal SendChatMessage message.
+      
+      if not hardware then
+         -- CHANNEL is blocked if there isn't a hardware trigger.
+         -- SAY and YELL are blocked too, but only if in the open world.
+         if (msg.type == "CHANNEL")
+            or ((msg.type == "SAY" or msg.type == "YELL")
+                                  and not IsInInstance()) then
+            return "PROMPT"
+         end
+      end
 		
 		-- Some chat types shouldn't allow metadata, but maybe there might be
 		--  some odd use-case for it later?
@@ -216,8 +231,7 @@ local function TryDispatchMessage( msg )
 		                                                 msg.arg3, msg.target )
       if Me.addon_action_blocked then
          -- Going to lose some bandwidth here, but whatever.
-         Me.PromptForContinue()
-         return false
+         return "PROMPT"
       end
       
       
@@ -229,8 +243,8 @@ local function TryDispatchMessage( msg )
 		end
 	end
    
-   Me.OnMessageSent( msg )
-	return true
+   Me.OnChatSent( msg )
+	return "PASSED"
 end
 
 -------------------------------------------------------------------------------
@@ -247,7 +261,8 @@ local function RunSendQueue()
 	-- If it has to wait for more bandwidth, then it cuts execution and starts 
 	while #Me.out_chat_buffer > 0 do --                  a timer to continue.
 		local msg = Me.out_chat_buffer[1]
-		if TryDispatchMessage( msg ) then
+      local status = TryDispatchMessage( msg )
+		if status == "PASSED" then
 			table.remove( Me.out_chat_buffer, 1 )
 			
 			-- One thing I wish Lua had was a continue statement; with that,
@@ -262,11 +277,15 @@ local function RunSendQueue()
 				ScheduleSendQueue()
 				return
 			end
-		else
+      elseif status == "WAIT" then
 			-- If there isn't any bandwidth, then we start a thread.
 			ScheduleSendQueue()
 			return
-		end
+		elseif status == "PROMPT" then
+         -- We need a hardware event to continue.
+         Me.PromptForContinue()
+			return
+      end
 	end
 	
 	-- This is a callback to the main code that lets it know we're done
@@ -295,6 +314,12 @@ ScheduleSendQueue = function()
 	end
 	
 	C_Timer.After( TIMER_PERIOD, RunSendQueue )
+end
+
+function Me.PipeThrottlerKeystroke()
+   Me.triggered_from_keystroke = true
+   RunSendQueue()
+   Me.triggered_from_keystroke = false
 end
 
 -------------------------------------------------------------------------------
@@ -341,30 +366,3 @@ function Me.ThrottlerHealth()
 	return math.ceil(Me.bandwidth / THROTTLE_BURST * 100)
 end
 
-StaticPopupDialogs["GOPHER_PIPER"] = {
-	text         = "Press enter to continue sending your message.";
-	button1      = "Continue";
-	button2      = "Cancel";
-   enterClicksFirstButton = true;
-	whileDead    = true;
-	timeout      = 0;
-   OnUpdate = function( self )
-      
-   end;
-	OnAccept = function( self )
-      
-	end;
-	EditBoxOnEscapePressed = function(self)
-      
-	end;
-	EditBoxOnEnterPressed = function(self, data)
-      
-	end;
-}
-
--------------------------------------------------------------------------------
--- The Piper is the dialog that pops up to manually pipe the chat queue,
---  necessary when sending longer /say chat in the world.
-function Me.ShowPiper()
-   StaticPopup_Show( "GOPHER_PIPER" )
-end
