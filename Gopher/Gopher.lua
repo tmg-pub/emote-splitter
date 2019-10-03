@@ -276,6 +276,8 @@ function Me.OnLogin()
    -- Delay this a little so we give time for their own OnLogin to trigger.
    C_Timer.After( 0.01, Me.AddCompatibilityLayers )
    Me.PLAYER_GUID = UnitGUID("player")
+
+   Me.SetupContinueFrame()
    
    -- Message hooking. These first ones are the public message types that we
    --  want to hook for confirmation. They're the ones that can error out if
@@ -327,6 +329,37 @@ function Me.OnLogin()
       end)
    
    Me.DebugLog( "Initialized." )
+end
+
+-------------------------------------------------------------------------------
+function Me.SetupContinueFrame()
+   Me.continue_frame = Me.continue_frame
+                       or CreateFrame( "Frame", nil, UIParent )
+   Me.continue_frame:Hide()
+                       
+   Me.continue_frame:SetScript( "OnUpdate", function( self )
+      if LAST_ACTIVE_CHAT_EDIT_BOX then
+         self:SetAllPoints( LAST_ACTIVE_CHAT_EDIT_BOX )
+      end
+   end)
+   
+   Me.continue_frame.text = Me.continue_frame.text
+                            or Me.continue_frame:CreateFontString()
+
+   local text = Me.continue_frame.text
+   text:SetFontObject( GameFontNormal )
+   text:SetText( "Press enter to continue." )
+   text:SetAllPoints()
+end
+
+-------------------------------------------------------------------------------
+function Me.ShowContinueFrame()
+   Me.continue_frame:Show()
+end
+
+-------------------------------------------------------------------------------
+function Me.HideContinueFrame()
+   Me.continue_frame:Hide()
 end
 
 -------------------------------------------------------------------------------
@@ -701,15 +734,26 @@ end
 -- main AddChat function.
 --
 function Me.SendChatMessageHook( msg, chat_type, language, channel )
+   -- Inside this execution path, we're typically (and should be) triggered by
+   --  a hardware event so we can use all chat types. In 8.2.5, some chat types
+   --  are restricted with no hardware event, such as /say, /yell, and channel.
+   -- We can detect that error later down the line and then prompt for a
+   --  keystroke in the throttler.
+   Me.inside_hook = "CHAT"
    Me.AddChat( msg, chat_type or "SAY", language, channel )
+   Me.inside_hook = nil
 end
 
 function Me.BNSendWhisperHook( presence_id, message_text ) 
+   Me.inside_hook = "BNET"
    Me.AddChat( message_text, "BNET", nil, presence_id )
+   Me.inside_hook = nil
 end
 
 function Me.ClubSendMessageHook( club_id, stream_id, message )
+   Me.inside_hook = "CLUB"
    Me.AddChat( message, "CLUB", club_id, stream_id )
+   Me.inside_hook = nil
 end
 
 -------------------------------------------------------------------------------
@@ -1299,8 +1343,8 @@ function Me.ChatQueueNext()
       else
          local channel = QUEUED_TYPES[q.type]
          if not Me.channels_busy[channel] then
-            Me.Timer_Start( "gopher_channel_"..channel, "push", 
-                                   Me.CHAT_TIMEOUT, Me.ChatDeath, channel )
+    --        Me.Timer_Start( "gopher_channel_"..channel, "push", 
+    --                               Me.CHAT_TIMEOUT, Me.ChatDeath, channel )
             Me.channels_busy[channel] = q
             -- Some of our error handlers can trigger immediately when you
             --  try to send a chat message, like the club types or the
@@ -1339,6 +1383,22 @@ function Me.ChatQueueNext()
    --  This happens under heavy latency or when something prevents our
    --  message from being sent (and we don't know it). We want to do a hard
    --  reset in that case so we don't get stuck in a failed state.
+end
+
+-------------------------------------------------------------------------------
+-- This is called from the throttler when a chat message is released from the
+--  queue and put out onto the line. We need to wait until here to start our
+--  timeout timers, because some messages might take significant delays due to
+--  needing a keypress to resume.
+function Me.OnChatSent( msg )
+   local channel = QUEUED_TYPES[ msg.type ]
+   if not channel then
+      -- This is an unqueued message, which aren't babysat.
+      return
+   end
+   
+   Me.Timer_Start( "gopher_channel_"..channel, "push", 
+                          Me.CHAT_TIMEOUT, Me.ChatDeath, channel )
 end
 
 -------------------------------------------------------------------------------
@@ -1751,6 +1811,47 @@ function Me.OnClubMessageAdded( event, club_id, stream_id, message_id )
    end
 end
 
+function Me.IsInWorld()
+   
+end
+
+-------------------------------------------------------------------------------
+-- Returns true if the message queue has entries that need hardware events to
+--  send, such as /say in the open world (8.2.5).
+function Me.HasProtectedMessagesQueued()
+   if IsInInstance() then return end
+   
+   for _, q in pairs( Me.chat_queue ) do
+      for k, v in pairs( q ) do
+         if v.type == "SAY" or v.type == "YELL" or v.type == "CHANNEL" then
+            return true
+         end
+      end
+   end
+end
+
+Me.blockchat = true
+-------------------------------------------------------------------------------
+function Me.OnOpenChat( ... )
+   if Me.HasProtectedMessagesQueued() then
+      ACTIVE_CHAT_EDIT_BOX:Hide()
+      
+      if Me.prompt_continue then
+         Me.prompt_continue = false
+         Me.HideContinueFrame()
+         Me.triggered_from_keystroke = true
+         
+         Me.triggered_from_keystroke = false
+      end
+      
+   end
+end
+
+function Me.PromptForContinue()
+   Me.prompt_continue = true
+   Me.ShowContinueFrame()
+end
+
 -------------------------------------------------------------------------------
 -- Hooks
 -------------------------------------------------------------------------------
@@ -1762,6 +1863,7 @@ end
 --  expectation. For any addons that need special compatibility care, we add
 --                                            support in compatibility.lua.
 Me.hooks = Me.hooks or {}
+
 if not Me.hooks.SendChatMessage then
    Me.hooks.SendChatMessage = SendChatMessage
    -- We pass this through an anonymous function so that we can upgrade it
@@ -1769,14 +1871,22 @@ if not Me.hooks.SendChatMessage then
    --  SendChatMessageHook, because that function might change when we 
    --  load a newer version.
    function SendChatMessage( ... )
-      return Me.SendChatMessageHook(...)
+      return Me.SendChatMessageHook( ... )
    end
 end
+
 if not Me.hooks.BNSendWhisper then
    Me.hooks.BNSendWhisper = BNSendWhisper
    function BNSendWhisper( ... )
-      return Me.BNSendWhisperHook(...)
+      return Me.BNSendWhisperHook( ... )
    end
+end
+
+if not Me.hooks.ChatFrame_OpenChat then
+   Me.hooks.ChatFrame_OpenChat = true
+   hooksecurefunc( "ChatFrame_OpenChat", function( ... )
+      Me.OnOpenChat( ... )
+   end)
 end
 
 if C_Club then -- [7.x compat]

@@ -176,19 +176,18 @@ local function TryDispatchMessage( msg )
 		--  to this chat type, as well as GUILD and OFFICER.
       Me.addon_action_blocked = false
 		SafeCall( Me.hooks.ClubSendMessage, msg.arg3, msg.target, msg.msg )
+      if Me.addon_action_blocked then
+         -- Going to lose some bandwidth here, but whatever.
+         Me.PromptForContinue()
+         return false
+      end
+      
 	elseif msgtype == "CLUBDELETE" then
 		SafeCall( C_Club.DestroyMessage, msg.arg3, msg.target, msg.cmid )
 	elseif msgtype == "CLUBEDIT" then
 		SafeCall( C_Club.EditMessage, msg.arg3, msg.target, msg.cmid, msg.msg )
 	else
 		-- Otherwise, this is treated like a normal SendChatMessage message.
-		
-		-- For public chats that can trigger the server throttle, we measure
-		--  the latency to help us out in severe situations where the client
-		--  is nearly disconnecting (this helps to avoid double-posting).
-		if msgtype == "SAY" or msgtype == "EMOTE" or msgtype == "YELL" then
-			Me.StartLatencyRecording()
-		end
 		
 		-- Some chat types shouldn't allow metadata, but maybe there might be
 		--  some odd use-case for it later?
@@ -215,7 +214,22 @@ local function TryDispatchMessage( msg )
       Me.addon_action_blocked = false
 		SafeCall( Me.hooks.SendChatMessage, msg.msg, msgtype, 
 		                                                 msg.arg3, msg.target )
+      if Me.addon_action_blocked then
+         -- Going to lose some bandwidth here, but whatever.
+         Me.PromptForContinue()
+         return false
+      end
+      
+      
+		-- For public chats that can trigger the server throttle, we measure
+		--  the latency to help us out in severe situations where the client
+		--  is nearly disconnecting (this helps to avoid double-posting).
+		if msgtype == "SAY" or msgtype == "EMOTE" or msgtype == "YELL" then
+			Me.StartLatencyRecording()
+		end
 	end
+   
+   Me.OnMessageSent( msg )
 	return true
 end
 
@@ -325,4 +339,32 @@ end
 function Me.ThrottlerHealth()
 	UpdateBandwidth()
 	return math.ceil(Me.bandwidth / THROTTLE_BURST * 100)
+end
+
+StaticPopupDialogs["GOPHER_PIPER"] = {
+	text         = "Press enter to continue sending your message.";
+	button1      = "Continue";
+	button2      = "Cancel";
+   enterClicksFirstButton = true;
+	whileDead    = true;
+	timeout      = 0;
+   OnUpdate = function( self )
+      
+   end;
+	OnAccept = function( self )
+      
+	end;
+	EditBoxOnEscapePressed = function(self)
+      
+	end;
+	EditBoxOnEnterPressed = function(self, data)
+      
+	end;
+}
+
+-------------------------------------------------------------------------------
+-- The Piper is the dialog that pops up to manually pipe the chat queue,
+--  necessary when sending longer /say chat in the world.
+function Me.ShowPiper()
+   StaticPopup_Show( "GOPHER_PIPER" )
 end
