@@ -1,4 +1,4 @@
--------------------------------------------------------------------------------
+   -------------------------------------------------------------------------------
 -- Gopher
 -- by Tammya-MoonGuard (Copyright 2018)
 --
@@ -1819,10 +1819,14 @@ end
 -- Returns true if the message queue has entries that need hardware events to
 --  send, such as /say in the open world (8.2.5).
 function Me.HasProtectedMessagesQueued()
+   local count = 0
    for _, q in pairs( Me.chat_queue ) do
       if ((q.type == "SAY" or q.type == "YELL") and not IsInInstance())
                                 or q.type == "CHANNEL" or q.type == "CLUB" then
-         return true
+         count = count + 1
+         if count >= 2 then
+            return true
+         end
       end
    end
 end
@@ -1833,8 +1837,8 @@ end
 --  we aren't adding unnecessary taint to the UI, and we just close the chat
 --  edit box if we want to block it.
 function Me.OnOpenChat( ... )
-   if Me.HasProtectedMessagesQueued() or Me.prompt_continue then
-      if ACTIVE_CHAT_EDIT_BOX then
+   if Me.TryContinuePrompt() then
+      if ACTIVE_CHAT_EDIT_BOX and ACTIVE_CHAT_EDIT_BOX.text ~= "/" then
          ACTIVE_CHAT_EDIT_BOX:Hide()
       end
       
@@ -1844,6 +1848,11 @@ function Me.OnOpenChat( ... )
       if CHAT_FOCUS_OVERRIDE then
          CHAT_FOCUS_OVERRIDE:ClearFocus()
       end
+   end
+   --[[
+   if Me.prompt_continue then
+   
+      
       
       if Me.prompt_continue and Me.ThrottlerHealth() > 30 then
          Me.prompt_continue = false
@@ -1851,6 +1860,15 @@ function Me.OnOpenChat( ... )
          Me.PipeThrottlerKeystroke()
       end
       
+   end]]
+end
+
+function Me.TryContinuePrompt()
+   if Me.prompt_continue and Me.ThrottlerHealth() > 30 then
+      Me.prompt_continue = false
+      Me.HideContinueFrame()
+      Me.PipeThrottlerKeystroke()
+      return true
    end
 end
 
