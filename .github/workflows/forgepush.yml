@@ -23,4 +23,4 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE
           wget https://raw.githubusercontent.com/tmg-pub/forgepush/main/forgepush.py
-          py forgepush.py --apitoken ${{secrets.forgetoken}}
+          python3 forgepush.py --apitoken ${{secrets.FORGETOKEN}}
