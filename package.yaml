@@ -1,0 +1,7 @@
+project-id: 100713
+name: EmoteSplitter
+version: 1.6.3
+export:
+  EmoteSplitter: src
+  EmoteSplitter/libs: libs
+  EmoteSplitter/Gopher: Gopher
