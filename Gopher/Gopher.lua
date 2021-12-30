@@ -705,8 +705,8 @@ end
 -- Returns a table of lines found in the text {line1, line2, ...}. Doesn't 
 --  include any newline characters or marks in the results. If there aren't any
 --  newlines, then this is going to just return { text }.
---                               --
-function Me.SplitLines( text )   --
+--    
+function Me.SplitLines( text )
    -- We merge "\n" into LF too. This might seem a little bit unwieldy, right?
    -- Like, you're wondering what if the user pastes something
    --  like "C:\nothing\etc..." into their chatbox to send to someone. It'll
@@ -861,11 +861,14 @@ function Me.AddChat( msg, chat_type, arg3, target, hook_start )
    
    msg = tostring( msg or "" )
 
+
+   -- WP:
+   -- These are small little checks to prevent messages from landing
+   -- weird. Quality of life, should probably be behind a toggle, or something.
+
    local _, quoteCount = string.gsub(msg, "\"", "\"")
-   if (quoteCount % 2 ~= 0) then
-      if (msg == Me.last_tried_msg) then
-         -- WP: maaaaybe i'd like to handle something here?
-      else
+   if (quoteCount % 2 ~= 0) and chat_type == "EMOTE" then
+      if (msg ~= Me.last_tried_msg) then
          print("|cffFF0000Your message is missing a quotation mark!|r")
          print("|cffFF0000Send it again to disregard this warning. (Press the up-arrow to retrieve the message.)|r")
          Me.last_tried_msg = msg
@@ -874,11 +877,9 @@ function Me.AddChat( msg, chat_type, arg3, target, hook_start )
    end
 
    if UnitIsAFK("player") and chat_type == "EMOTE" then
-      if (msg == Me.last_tried_msg) then
-         -- again– WP: maybe i'd like to handle something here?
-      else
+      if (msg ~= Me.last_tried_msg) then
          print("|cffFF0000You're AFK! Your message is gonna have that nasty AFK tag!|r")
-         print("|cffFF0000Send your message again to disregard this warning.|r")
+         print("|cffFF0000Send it again to disregard this warning. (Press the up-arrow to retrieve the message.)|r")
          Me.last_tried_msg = msg
          msg = false
       end
@@ -998,7 +999,7 @@ Me.chat_replacement_patterns = {
    --  (apparently) to allow any valid link, along with the exact color code
    --  for them.
    "%\".-%\"",
-   "(|cff[0-9a-f]+|H[^|]+|h[^|]+|h|r)"; -- WINDPIPE: treat content between quotes as links. Done!
+   "(|cff[0-9a-f]+|H[^|]+|h[^|]+|h|r)";
    -- RegEx's are pretty cool,
    --  aren't they?
    --  I had an idea to also keep addon links intact, but there haven't really
@@ -1010,47 +1011,14 @@ Me.chat_replacement_patterns = {
    --
    -- A little note here, that the code below will break if there is a match
    -- that's shorter than 4 (or 5?) characters.
+   -- WP: treat content between quotes as preservable links.
 }
-
-function Me.SplitLines( text )   --
-   -- We merge "\n" into LF too. This might seem a little bit unwieldy, right?
-   -- Like, you're wondering what if the user pastes something
-   --  like "C:\nothing\etc..." into their chatbox to send to someone. It'll
-   --          ^---.
-   --  be caught by this and treated like a newline.
-   -- Truth is, is that the user can't actually type "\n". Even without any
-   --  addons, typing "\n" will cut off the rest of your message without 
-   --  question. It's just a quirk in the API. Probably some security measure
-   --  or some such for prudence? We're just making use of that quirk so
-   --                             -- people can easily type a newline mark.
-   text = text:gsub( "\\n", "\n" )
-
-   -- WP: lazy. i'd like to do this at some point, just be agnostic to 
-   -- curly quotes, since they matter now.
-
-   -- text = text:gsub( "[‘’]", "\'" )
-   -- text = text:gsub( "[”“]", "\"" )
-
-   -- It's pretty straightforward to split the message now, we just use a 
-   local lines = {}                        -- simple pattern and toss it 
-   for line in text:gmatch( "[^\n]+" ) do  --  into a table.
-      table.insert( lines, line )         --
-   end                                     --
-                                           --
-   -- We still want to send empty messages for AFK, DND, etc.
-   if #lines == 0 then
-      lines[1] = ""
-   end
-   -- We used to handle this a bit differently, which was pretty nasty in
-   --  regard to chat filters and such. It's a /little/ more complex now,
-   return lines -- but a much better solution in the end.
-end
-
 
 -- WP: This is a function that'll do its best to split very, very long dialogue into
 -- nice little dialogue chunks, either at words that threaten to break the char limit,
 -- or at punctuation. Whichever it can do.
--- it's important to note that these are agnostic to the rest of the text in the message.
+-- it's important to note that these chunks are agnostic to the rest of the text in the
+-- message, which can POTENTIALLY lead to weird splitting. there's a better way to do this...
 function Me.HandleVeryLongQuotes(link)
    words = {}
    length_acc = 0
@@ -1101,14 +1069,10 @@ function Me.HandleVeryLongQuotes(link)
 end
 
 function Me.FindProblemQuotesAndSplit(text, chunk_size)
-   -- WP: Butchered combination of two functions. Takes any really long patterns and puts newlines around them,
-   -- then converts them to line format for the real splitter to use. How convoluted!
-
-   -- WP: This just displays a message that tells you when you have misaligned quotes.
-   -- local _, quoteCount = string.gsub(text, "\"", "\"")
-   -- if (quoteCount % 2 ~= 0) then
-   --    print("|cffFF0000Your message has misaligned quotes!|r")
-   -- end
+   -- WP: Combination of the SplitLines function and quote stuff.
+   -- Takes any really long patterns and puts newlines around them,
+   -- then converts them to line format for the real splitting logic to use. 
+   -- How convoluted!
 
    for index, pattern in ipairs( Me.chat_replacement_patterns ) do
       text = text:gsub( pattern, function( link )
@@ -1182,18 +1146,10 @@ function Me.SplitMessage( text, chunk_size, splitmark_start, splitmark_end,
          --  replacement list to pull from.
          -- replaced_links is a table of lists, and we index it by this `x`.
          -- In here, we just throw it on whichever list this pattern belongs
-         
-         -- WINDPIPE: but, let's NOT do that if we know the link is going to
-         --  fail to be replaced due to length. 
-
-         if link:len() >= chunk_size - pad_len then
-            return
-         else
-            replaced_links[index] = replaced_links[index] or {} -- to.
-            table.insert( replaced_links[index], link )
-            return "\001\002" .. index 
-                   .. ("\002"):rep( link:len() - 4 ) .. "\003"
-         end
+         replaced_links[index] = replaced_links[index] or {} -- to.
+         table.insert( replaced_links[index], link )
+         return "\001\002" .. index 
+                .. ("\002"):rep( link:len() - 4 ) .. "\003"
       end)
    end
    
@@ -1391,6 +1347,7 @@ function Me.QueueChat( msg, type, arg3, target )
          UIErrorsFrame:AddMessage( ERR_CHAT_WHILE_DEAD, 1.0, 0.1, 0.1, 1.0 )
          return
       end
+
       ChatQueueInsert( msg_pack )
       
       if Me.queue_paused then
