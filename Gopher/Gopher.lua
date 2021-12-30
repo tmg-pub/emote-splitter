@@ -1,4 +1,4 @@
-    -------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Gopher
 -- by Tammya-MoonGuard (Copyright 2018)
 --
@@ -1042,7 +1042,7 @@ function Me.HandleVeryLongQuotes(link)
       if(i+1 <= table_length) then
          -- begin doing splitting! we keep track of the next word in the message,
          -- as well as a little bool that tells us if we've hit punctuation.
-
+         -- (maybe remove the comma as a breakpoint? could look nicer!)
          next_word = words[i+1]
          sentence_end = (string.find(string.sub(word, -1), "[%.,!%?%-]")) == 1
 
