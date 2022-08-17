@@ -1,6 +1,5 @@
-project-id: 100713
+curse-project-id: 100713
 name: EmoteSplitter
-version: 1.6.4
 export:
   EmoteSplitter: src
   EmoteSplitter/libs: libs
