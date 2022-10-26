@@ -19,8 +19,8 @@
         frames will typically appear bigger. Two, your frame won't be hidden
         when you press Alt-Z. Only things that are children of the UI Parent
         are. -->
-  <Frame name="EmoteSplitterSending" enableMouse="false" visible="false" 
-         frameStata="DIALOG" parent="UIParent">
+  <Frame name="EmoteSplitterSending" enableMouse="false" hidden="true" 
+         frameStrata="DIALOG" parent="UIParent">
          
     <!-- We don't really need size but I feel good putting this here 
          anyway. -->
