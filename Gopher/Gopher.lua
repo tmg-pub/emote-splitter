@@ -1,4 +1,4 @@
-   -------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Gopher
 -- by Tammya-MoonGuard (Copyright 2018)
 --
@@ -102,6 +102,7 @@ Me.chat_queue    = {}
 Me.channels_busy = {}
 Me.message_id    = 1
 Me.NUM_CHANNELS  = 3
+Me.last_tried_msg = ""
 -------------------------------------------------------------------------------
 -- The way we dequeue is a little complex. It's not a plain FIFO anymore.
 -- Firstly we sort by priority, lower numbers are sent before higher numbers.
@@ -704,8 +705,8 @@ end
 -- Returns a table of lines found in the text {line1, line2, ...}. Doesn't 
 --  include any newline characters or marks in the results. If there aren't any
 --  newlines, then this is going to just return { text }.
---                               --
-function Me.SplitLines( text )   --
+--    
+function Me.SplitLines( text )
    -- We merge "\n" into LF too. This might seem a little bit unwieldy, right?
    -- Like, you're wondering what if the user pastes something
    --  like "C:\nothing\etc..." into their chatbox to send to someone. It'll
@@ -859,7 +860,32 @@ function Me.AddChat( msg, chat_type, arg3, target, hook_start )
    end
    
    msg = tostring( msg or "" )
-   
+
+
+   -- WP:
+   -- These are small little checks to prevent messages from landing
+   -- weird. Quality of life, should probably be behind a toggle, or something.
+
+   local _, quoteCount = string.gsub(msg, "\"", "\"")
+   if (quoteCount % 2 ~= 0) and chat_type == "EMOTE" then
+      if (msg ~= Me.last_tried_msg) then
+         print("|cffFF0000Your message is missing a quotation mark!|r")
+         print("|cffFF0000Send it again to disregard this warning. (Press the up-arrow to retrieve the message.)|r")
+         Me.last_tried_msg = msg
+         msg = false
+      end
+   end
+
+   if UnitIsAFK("player") and chat_type == "EMOTE" then
+      if (msg ~= Me.last_tried_msg) then
+         print("|cffFF0000You're AFK! Your message is gonna have that nasty AFK tag!|r")
+         print("|cffFF0000Send it again to disregard this warning. (Press the up-arrow to retrieve the message.)|r")
+         Me.last_tried_msg = msg
+         msg = false
+      end
+   end
+
+
    msg, chat_type, arg3, target = 
       Me.FireEventEx( "CHAT_NEW", hook_start, msg, chat_type, arg3, target )
       
@@ -870,7 +896,7 @@ function Me.AddChat( msg, chat_type, arg3, target, hook_start )
    
    -- Now we cut this message up into potentially several pieces. First we're
    --  passing it through this line splitting function, which gives us a table
-   msg = Me.SplitLines( msg )  -- of lines, or just { msg } if there aren't
+   msg = Me.FindProblemQuotesAndSplit( msg )  -- of lines, or just { msg } if there aren't
                                  --  any newlines.
    chat_type = chat_type:upper()
    -- We do some work here in rerouting some messages to avoid using
@@ -972,9 +998,11 @@ Me.chat_replacement_patterns = {
    -- Who knows how the chat function works in WoW, but it has vigorous checks
    --  (apparently) to allow any valid link, along with the exact color code
    --  for them.
-   "(|cff[0-9a-f]+|H[^|]+|h[^|]+|h|r)"; -- RegEx's are pretty cool,
-                                        --  aren't they?
-   -- I had an idea to also keep addon links intact, but there haven't really
+   "%\".-%\"",
+   "(|cff[0-9a-f]+|H[^|]+|h[^|]+|h|r)";
+   -- RegEx's are pretty cool,
+   --  aren't they?
+   --  I had an idea to also keep addon links intact, but there haven't really
    --  been any complaints, and this could potentially result in some breakage
    --  from people typing a long message (which breaks the limit) surrounded
    --  by brackets (perhaps an OOC message).
@@ -983,7 +1011,96 @@ Me.chat_replacement_patterns = {
    --
    -- A little note here, that the code below will break if there is a match
    -- that's shorter than 4 (or 5?) characters.
+   -- WP: treat content between quotes as preservable links.
 }
+
+-- WP: This is a function that'll do its best to split very, very long dialogue into
+-- nice little dialogue chunks, either at words that threaten to break the char limit,
+-- or at punctuation. Whichever it can do.
+-- it's important to note that these chunks are agnostic to the rest of the text in the
+-- message, which can POTENTIALLY lead to weird splitting. there's a better way to do this...
+function Me.HandleVeryLongQuotes(link)
+   words = {}
+   length_acc = 0
+   table_length = 0
+
+   -- Turn our string into a table of words, so that we can iterate over them.
+   -- index, value. simple, eh?
+   for word in link:gmatch("%S+") do 
+      table.insert(words, word)
+      table_length = table_length + 1
+   end
+
+   for i,word in ipairs(words) do
+
+      -- keep track of how long this chunk is running.
+      -- if we're going to add a word onto it that breaks our limit, we can stop.
+      length_acc = length_acc + string.len(word)
+
+      -- if there's another word after this...
+      -- (there might be an edge case in the logic here. i'm too tired to see it.)
+      if(i+1 <= table_length) then
+         -- begin doing splitting! we keep track of the next word in the message,
+         -- as well as a little bool that tells us if we've hit punctuation.
+         -- (maybe remove the comma as a breakpoint? could look nicer!)
+         next_word = words[i+1]
+         sentence_end = (string.find(string.sub(word, -1), "[%.,!%?%-]")) == 1
+
+         -- if the next word sends us over the char limit OR the message is nicely filled out + we're at
+         -- a logical breakpoint, we can split. format differently depending on which kind of split.
+
+         if (string.len(next_word) + length_acc > 200) or (length_acc > 175 and sentence_end) then
+            if sentence_end then
+               words[i] = word .. "\"\n"
+               words[i+1] = "\"" .. next_word
+            else
+               words[i] = word .. "-\"\n"
+               words[i+1] = "\"-" .. next_word
+            end
+            -- reset the length accumulator– this is a different chunk now.
+            length_acc = 0
+         end
+      end
+   end
+
+   -- done! return our funny little dialogue.
+   return table.concat(words, " ")
+
+end
+
+function Me.FindProblemQuotesAndSplit(text, chunk_size)
+   -- WP: Combination of the SplitLines function and quote stuff.
+   -- Takes any really long patterns and puts newlines around them,
+   -- then converts them to line format for the real splitting logic to use. 
+   -- How convoluted!
+
+   for index, pattern in ipairs( Me.chat_replacement_patterns ) do
+      text = text:gsub( pattern, function( link )
+         if link:len() >= 250 then
+            return Me.HandleVeryLongQuotes(link)
+         end
+      end)
+   end
+
+   text = text:gsub( "\\n", "\n" ) --
+                                   --
+   -- It's pretty straightforward to split the message now, we just use a 
+   local lines = {}                        -- simple pattern and toss it 
+   for line in text:gmatch( "[^\n]+" ) do  --  into a table.
+      table.insert( lines, line )         --
+   end
+                                           --
+   -- We still want to send empty messages for AFK, DND, etc.
+   if #lines == 0 then
+      lines[1] = ""
+   end
+   -- We used to handle this a bit differently, which was pretty nasty in
+   --  regard to chat filters and such. It's a /little/ more complex now,
+   return lines -- but a much better solution in the end.
+end
+
+
+
 
 -------------------------------------------------------------------------------
 -- Here's our main message splitting function. You pass in text, and it spits
@@ -1061,10 +1178,10 @@ function Me.SplitMessage( text, chunk_size, splitmark_start, splitmark_end,
          --               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
          -- Don't forget to leave some extra room!
          local ch = string.byte( text, i )
-         
+
          -- We split on spaces (ascii 32) or a start of a link (inserted
          if ch == 32 or ch == 1 then -- above).
-            
+
             -- If it's a space, then we discard it.
             -- Otherwise we want to preserve this character and keep it in
             local offset = 0                -- the next chunk.
@@ -1083,8 +1200,22 @@ function Me.SplitMessage( text, chunk_size, splitmark_start, splitmark_end,
             break
          end
          
+
+
+         -- !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+         -- WP: This actually catches dialogue sometimes. If you don't write 16+ 
+         -- characters of emote that end up becoming splittable, followed by long dialogue–
+         -- it's not gonna find a place to split, since all of the dialogue
+         -- is in link-replace format.
+
+         -- I can see two solutions to this: one is to handle this case in the
+         -- quote splitter, a small edge case for dialogue right after a very short emote.
+         -- the other is just to reduce "last bits of the string" count from 16 to,
+         -- like, 10.
+         -- !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
          -- If the scan reaches all the way to the last bits of the string,
-         if i <= 16 then  -- then that means there's a REALLY long word.
+         if i <= 10 then  -- then that means there's a REALLY long word.
             -- In that case, we just break the message wherever. We just
             --  need to take care to not break UTF-8 character strings.
             -- Who knows, maybe it might not even be abuse. Maybe it's
@@ -1216,7 +1347,7 @@ function Me.QueueChat( msg, type, arg3, target )
          UIErrorsFrame:AddMessage( ERR_CHAT_WHILE_DEAD, 1.0, 0.1, 0.1, 1.0 )
          return
       end
-      
+
       ChatQueueInsert( msg_pack )
       
       if Me.queue_paused then
