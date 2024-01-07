@@ -24,7 +24,7 @@
 --      throttle library to ensure that outgoing chat is your #1 priority.
 -----------------------------------------------------------------------------^-
 
-local VERSION = 12
+local VERSION = 13
 
 if IsLoggedIn() then
    error( "Gopher can't be loaded on demand!" )
@@ -972,7 +972,7 @@ Me.chat_replacement_patterns = {
    -- Who knows how the chat function works in WoW, but it has vigorous checks
    --  (apparently) to allow any valid link, along with the exact color code
    --  for them.
-   "(|cff[0-9a-f]+|H[^|]+|h[^|]+|h|r)"; -- RegEx's are pretty cool,
+   "(|cff[0-9a-f]+|H[^|]+|h(.-)|h|r)"; -- RegEx's are pretty cool,
                                         --  aren't they?
    -- I had an idea to also keep addon links intact, but there haven't really
    --  been any complaints, and this could potentially result in some breakage
@@ -983,6 +983,14 @@ Me.chat_replacement_patterns = {
    --
    -- A little note here, that the code below will break if there is a match
    -- that's shorter than 4 (or 5?) characters.
+
+   -- 1/7/24 updates:
+   -- Capture the text part of a link to use it to compute length. WoW allows long links
+   -- to be sent in a single message, so we'll use the actual text length only when
+   -- checking the length.
+   
+   -- In addition, some links contain "|A" codes in the text, so we will match with non
+   -- greedy dot instead of non-pipe chars. 
 }
 
 -------------------------------------------------------------------------------
@@ -1010,17 +1018,20 @@ function Me.SplitMessage( text, chunk_size, splitmark_start, splitmark_end,
    
    -- For short messages we can not waste any time and return immediately
    --                 if they can fit within a chunk already. A nice shortcut.
-   if text:len() + pad_len <= chunk_size then
-      return { chunk_prefix .. text .. chunk_suffix }
-   end
+   -- I acknowledge that this shortcut will not detect messages with long link metadata
+   -- to fit within a single message.
+   --if text:len() + pad_len <= chunk_size then
+  --    return { chunk_prefix .. text .. chunk_suffix }
+   --end
    
    -- Otherwise, we gotta get our hands dirty. We want to preserve links (or
    --  other defined things in the future) from being split apart by the
    --  cutting code below. We do that by turning them to solid strings that
    local replaced_links = {} -- contain an ID code for reversing at the end.
                              --
+   
    for index, pattern in ipairs( Me.chat_replacement_patterns ) do
-      text = text:gsub( pattern, function( link )
+      text = text:gsub( pattern, function( link, textpart )
          -- This turns something like "[Chat Link]" into "12x22222223",
          --  essentially obliterating that space in there so this "word"
          --  is kept whole. The x there is used to identify the pattern
@@ -1029,10 +1040,18 @@ function Me.SplitMessage( text, chunk_size, splitmark_start, splitmark_end,
          --  replacement list to pull from.
          -- replaced_links is a table of lists, and we index it by this `x`.
          -- In here, we just throw it on whichever list this pattern belongs
+
+         -- 1/7/24:
+         -- We replace the complete link string with a string that matches the length
+         -- of the visible text part. For example, linking a level 5 Elemental Lariat with
+         -- 3 gems is over 270ish chars by itself. WoW probably only checks the visible
+         -- length of the message when enforcing limits.
+         -- We're reducing the text size here, then splitting happens, then we expand it
+         -- back to the original size.
          replaced_links[index] = replaced_links[index] or {} -- to.
          table.insert( replaced_links[index], link )
          return "\001\002" .. index 
-                .. ("\002"):rep( link:len() - 4 ) .. "\003"
+                .. ("\002"):rep( textpart:len() - 4 ) .. "\003"
       end)
    end
    
