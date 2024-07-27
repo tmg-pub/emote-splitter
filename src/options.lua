@@ -296,6 +296,5 @@ function Me.Options_Show()
 	--  after the first time, but it's a bit of needless work to add some kind
 	--  of check when it doesn't really matter, does it? Nobody's gonna notice
 	--  it setting up your options page twice.
-	InterfaceOptionsFrame_OpenToCategory( "Emote Splitter" )
-	InterfaceOptionsFrame_OpenToCategory( "Emote Splitter" )
+	Settings.OpenToCategory( "Emote Splitter" )
 end
