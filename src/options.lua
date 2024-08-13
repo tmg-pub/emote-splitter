@@ -91,7 +91,7 @@ local OPTIONS_TABLE = {
 			-- this. {1} is replaced with our addon version.
 			-- `name` for description sections contains the text to fill the
 			name = L( "Version: {1}", -- widget with.
-			          GetAddOnMetadata( "EmoteSplitter", "Version" ))
+			          C_AddOns.GetAddOnMetadata( "EmoteSplitter", "Version" ))
 			       .. "|n" .. L["by Tammya-MoonGuard"];
 			type = "description";
 		};
