@@ -148,8 +148,16 @@ function Me:OnEnable()
 	-- Localize the continuation prompt label.
 	Gopher.Internal.continue_frame_label = L["Press enter to continue."]
 
-	-- Unlock the chat editboxes when they show.
-	hooksecurefunc( "ChatEdit_OnShow", Me.ChatEdit_OnShow ) 
+	-- Updated for WoW 11.2.7: ChatEdit_OnShow no longer exists as a global function.
+	-- Instead, we hook the OnShow script for each chat edit box individually.
+	-- This is the modern way to handle chat edit box events since functions were
+	-- moved to ChatFrameEditBox mixins.
+	for i = 1, NUM_CHAT_WINDOWS do
+		local editbox = _G["ChatFrame" .. i .. "EditBox"]
+		if editbox then
+			editbox:HookScript("OnShow", Me.ChatEdit_OnShow)
+		end
+	end
 	
 	-- We're unlocking the chat editboxes here. This may be redundant, because
 	--  we also do it in the hook when the editbox shows, but it's for extra

@@ -323,7 +323,11 @@ function Me.OnLogin()
    
    -- Here's where we add the feature to hide the failure messages in the
    -- chat frames, the failure messages that the system sends when your
-   ChatFrame_AddMessageEventFilter( "CHAT_MSG_SYSTEM", -- chat gets
+
+   -- Use the appropriate API based on what's available
+   local AddFilter = ChatFrameUtil and ChatFrameUtil.AddMessageEventFilter or ChatFrame_AddMessageEventFilter
+
+   AddFilter( "CHAT_MSG_SYSTEM", -- chat gets
       function( _, _, msg, sender )                   --  throttled.
          -- `ERR_CHAT_THROTTLED` is the localized string.
          if Me.hide_failure_messages and msg == ERR_CHAT_THROTTLED then 
@@ -1929,7 +1933,7 @@ end
 
 if not Me.hooks.ChatFrame_OpenChat then
    Me.hooks.ChatFrame_OpenChat = true
-   hooksecurefunc( "ChatFrame_OpenChat", function( ... )
+   hooksecurefunc(ChatFrameUtil, "OpenChat", function( ... )
       Me.OnOpenChat( ... )
    end)
 end
