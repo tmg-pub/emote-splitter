@@ -60,6 +60,24 @@ EmoteSplitter = Me
 local L      = Me.Locale -- Easy access to our locale data.
 local Gopher = LibGopher
 
+-- Compatibility shim: some older addons call `ChatFrame_GetMessageEventFilters()`
+-- which was removed/changed in newer clients. Define a safe stub so those
+-- addons don't throw a hard error. We return an empty table or delegate to
+-- a chatframe method when available.
+if type( ChatFrame_GetMessageEventFilters ) ~= "function" then
+	ChatFrame_GetMessageEventFilters = function( ... )
+		-- If any chatframe exposes a helper, prefer that.
+		for i = 1, (NUM_CHAT_WINDOWS or 10) do
+			local cf = _G["ChatFrame" .. i]
+			if cf and type( cf.GetMessageEventFilters ) == "function" then
+				return cf:GetMessageEventFilters()
+			end
+		end
+		-- Fallback: return an empty table so callers can iterate safely.
+		return {}
+	end
+end
+
 -------------------------------------------------------------------------------
 -- Our slash command /emotesplitter.
 --
@@ -95,6 +113,13 @@ SlashCmdList["EMOTESPLITTER"] = function( msg )
 		--Me.max_message_length = v  -- ignore and report spam features are for,
 		Gopher:SetChunkSizeOverride( "OTHER", v )
 		print( L( "Max message length set to {1}.", v ))         -- right?
+		return
+	end
+	
+	-- Enable/disable debug logging for split messages
+	if arg1:lower() == "debug" then
+		Gopher.debug_log = not Gopher.debug_log
+		print(string.format("SplitMessage debug logging: %s", Gopher.debug_log and "ON" or "OFF"))
 		return
 	end
 end
@@ -149,23 +174,61 @@ function Me:OnEnable()
 	Gopher.Internal.continue_frame_label = L["Press enter to continue."]
 
 	-- Unlock the chat editboxes when they show.
-	hooksecurefunc( "ChatEdit_OnShow", Me.ChatEdit_OnShow ) 
+
+	-- Zaphon fix: updated for WoW 11.2.7: ChatEdit_OnShow no longer exists as a global function.
+	-- Instead, we hook the OnShow script for each chat edit box individually.
+	-- This is the modern way to handle chat edit box events since functions were
+	-- moved to ChatFrameEditBox mixins.
+	
+	-- Hook all chat frames including whisper windows (ChatFrame11+)
+	-- WoW allows up to 20 chat frames total
+	for i = 1, 20 do
+		local editbox = _G["ChatFrame" .. i .. "EditBox"]
+		if editbox then
+			editbox:HookScript("OnShow", Me.ChatEdit_OnShow)
+		end
+	end
 	
 	-- We're unlocking the chat editboxes here. This may be redundant, because
 	--  we also do it in the hook when the editbox shows, but it's for extra
 	--  good measure - make sure that we are getting these unlocked. Some
 	--  strange addon might even copy these values before the frame is even
-	for i = 1, NUM_CHAT_WINDOWS do                       -- shown... right?
+	for i = 1, 20 do                       -- shown... right?
 		local editbox = _G["ChatFrame" .. i .. "EditBox"]
-		editbox:SetMaxLetters( 0 )
-		editbox:SetMaxBytes( 0 )
-		-- A Blizzard dev added this function just for us. Without this, it
-		--  would be absolute hell to get this addon to work with the default
-		--  chat boxes, if not impossible. I'd have to create a whole new
-		--  chatting interface.
-		if editbox.SetVisibleTextByteLimit then  -- 7.x compat
-			editbox:SetVisibleTextByteLimit( 0 )
+		if editbox then
+			editbox:SetMaxLetters( 0 )
+			editbox:SetMaxBytes( 0 )
+			-- A Blizzard dev added this function just for us. Without this, it
+			--  would be absolute hell to get this addon to work with the default
+			--  chat boxes, if not impossible. I'd have to create a whole new
+			--  chatting interface.
+			if editbox.SetVisibleTextByteLimit then  -- 7.x compat
+				editbox:SetVisibleTextByteLimit( 0 )
+			end
 		end
+	end
+	
+	-- Hook whisper window creation (FCF = Floating Chat Frame)
+	-- This is critical for WoW 11.2+ where whisper tabs are created dynamically
+	-- and don't trigger the initial OnShow hooks above. When a whisper window
+	-- is created, we need to unlock its editbox and set up the OnShow hook.
+	if FCF_OpenTemporaryWindow then
+		hooksecurefunc("FCF_OpenTemporaryWindow", function(chatType, chatTarget, sourceChatFrame, selectWindow)
+			-- Give the frame a moment to be fully created, then unlock its editbox
+			C_Timer.After(0.1, function()
+				for i = 1, 50 do
+					local editbox = _G["ChatFrame" .. i .. "EditBox"]
+					if editbox then
+						Me.ChatEdit_OnShow(editbox)
+						-- Also hook OnShow if not already hooked
+						if not Me.hooks["ChatFrame"..i.."EditBox_OnShow"] then
+							Me.hooks["ChatFrame"..i.."EditBox_OnShow"] = true
+							editbox:HookScript("OnShow", Me.ChatEdit_OnShow)
+						end
+					end
+				end
+			end)
+		end)
 	end
 	
 	-- Our community chat hack entry.
@@ -188,6 +251,24 @@ function Me:OnEnable()
 	-- Initialize other modules here.
 	Me.EmoteProtection.Init()
 	--Me.ExtendTRPNPCChat()
+	
+	-- Check for CrossRP compatibility issue and warn user (only once)
+	if C_AddOns.IsAddOnLoaded("CrossRP") and not Me.db.global.crossrp_warning_acknowledged then
+		-- Register the dialog if it doesn't exist yet
+		StaticPopupDialogs["EMOTESPLITTER_CROSSRP_WARNING"] = {
+			text = "WARNING: CrossRP Detected\n\nCrossRP is known to break Emote Splitter's functionality. Please disable CrossRP if you want Emote Splitter to work correctly.",
+			button1 = "OK",
+			timeout = 0,
+			whileDead = true,
+			hideOnEscape = true,
+			preferredIndex = 3,
+			OnAccept = function()
+				-- Mark that the user has acknowledged this warning
+				Me.db.global.crossrp_warning_acknowledged = true
+			end,
+		}
+		StaticPopup_Show("EMOTESPLITTER_CROSSRP_WARNING")
+	end
 end
 
 -------------------------------------------------------------------------------
@@ -199,6 +280,11 @@ function Me.ChatEdit_OnShow( editbox ) -- someone is about to type!
 	if editbox.SetVisibleTextByteLimit then  -- 7.x compat
 		editbox:SetVisibleTextByteLimit( 0 ) --
 	end										 --
+	-- In WoW 11.2.7+, there's also a character limit for visible text
+	-- Try to set that as well if the method exists
+	if editbox.SetVisibleTextCharLimit then
+		editbox:SetVisibleTextCharLimit( 0 )
+	end
 end 
 
 -------------------------------------------------------------------------------

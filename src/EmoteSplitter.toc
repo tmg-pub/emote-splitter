@@ -1,9 +1,9 @@
 #------------------------------------------------------------------------------
-## Interface: 110200
-## Title: Emote Splitter
-## Version: @@addon_version@@
+## Interface: 110207
+## Title: Emote Splitter - Fixed
+## Version: V1.2.2 for Patch 11.2.7
 ## Notes: Unlocks chatbox and splits long emotes.
-## Author: Tammya-MoonGuard
+## Author: Updated by Lorthendor-MoonGuard, orignal code by Tammya-MoonGuard
 ## OptionalDeps:
 ## SavedVariables: EmoteSplitterSaved
 #------------------------------------------------------------------------------

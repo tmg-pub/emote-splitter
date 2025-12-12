@@ -322,9 +322,10 @@ function Me.OnLogin()
    Me.frame:RegisterEvent( "ADDON_ACTION_BLOCKED" )
    
    -- Here's where we add the feature to hide the failure messages in the
-   -- chat frames, the failure messages that the system sends when your
-   ChatFrame_AddMessageEventFilter( "CHAT_MSG_SYSTEM", -- chat gets
-      function( _, _, msg, sender )                   --  throttled.
+   -- chat frames, the failure messages that the system sends when your chat gets throttled
+   local AddFilter = ChatFrameUtil and ChatFrameUtil.AddMessageEventFilter or ChatFrame_AddMessageEventFilter
+   AddFilter("CHAT_MSG_SYSTEM",
+       function(_, _, msg, sender )
          -- `ERR_CHAT_THROTTLED` is the localized string.
          if Me.hide_failure_messages and msg == ERR_CHAT_THROTTLED then 
             -- Returning true from these callbacks block the message
@@ -353,6 +354,44 @@ function Me.SetupContinueFrame()
    local text = Me.continue_frame.text
    text:SetFontObject( GameFontNormal )
    text:SetAllPoints()
+      
+   -- Make the continue overlay clickable as a fallback when Enter doesn't
+   -- trigger ChatFrame_OpenChat on some clients or when other addons steal
+   -- focus. Clicking will simulate the hardware keystroke to resume sending.
+   Me.continue_frame:EnableMouse( true )
+   Me.continue_frame:SetScript( "OnMouseDown", function()
+      Me.HideContinueFrame()
+      Me.PipeThrottlerKeystroke()
+   end)
+   Me.continue_frame:SetFrameStrata( "DIALOG" )
+
+   -- Hook chat editboxes' OnEnterPressed so pressing Enter will resume the
+   -- throttler when the continue prompt is shown. This is guarded so we only
+   -- hook them once.
+   if not Me._continue_enter_hooked then
+      Me._continue_enter_hooked = true
+      for i = 1, (NUM_CHAT_WINDOWS or 10) do
+         local editbox = _G["ChatFrame" .. i .. "EditBox"]
+         if editbox and editbox.HookScript then
+            editbox:HookScript( "OnEnterPressed", function()
+               if Me.prompt_continue and (Me.intercept_enter == nil or Me.intercept_enter) then
+                  Me.DebugLog( "EditBox OnEnterPressed - forcing throttler resume." )
+                  Me.HideContinueFrame()
+                  Me.PipeThrottlerKeystroke()
+               end
+            end)
+         end
+      end
+      -- Try hooking some common alternate editboxes (Communities)
+      if CommunitiesFrame and CommunitiesFrame.ChatEditBox and CommunitiesFrame.ChatEditBox.HookScript then
+         CommunitiesFrame.ChatEditBox:HookScript( "OnEnterPressed", function()
+            if Me.prompt_continue and (Me.intercept_enter == nil or Me.intercept_enter) then
+               Me.HideContinueFrame()
+               Me.PipeThrottlerKeystroke()
+            end
+         end)
+      end
+   end
 end
 
 -------------------------------------------------------------------------------
@@ -1076,10 +1115,52 @@ function Me.SplitMessage( text, chunk_size, splitmark_start, splitmark_end,
       --  whitespace, or cutting right before it.
       -- We scan backwards for whitespace or an otherwise suitable place to
       --  break the message.
+      local quote_aware = Me.db and Me.db.global and Me.db.global.quote_aware_split
+      local split_at = nil
+      local split_offset = 0
+      local quote_size = 0  -- Track size of quote character (1 for ASCII, 3 for UTF-8)
+      -- Debug helpers (uncomment to trace splitting)
+      -- if quote_aware then
+      --    print("DEBUG: quote_aware_split ENABLED, chunk_size=" .. chunk_size .. ", text_len=" .. text:len())
+      --    print("DEBUG: first 50 chars: " .. text:sub(1, 50))
+      --    print(string.format("DEBUG: Position 1 char: 0x%02x, Position 2: 0x%02x", string.byte(text, 1) or 0, string.byte(text, 2) or 0))
+      -- end
+      
+      -- Try to get quote_aware_split from EmoteSplitter addon if available
+      if not quote_aware and _G.EmoteSplitter and _G.EmoteSplitter.db then
+         quote_aware = _G.EmoteSplitter.db.global and _G.EmoteSplitter.db.global.quote_aware_split
+      end
+      
+      -- Debug logging removed after verification
+      
       for i = chunk_size+1 - splitmark_end:len() - pad_len, 1, -1 do
          --               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
          -- Don't forget to leave some extra room!
          local ch = string.byte( text, i )
+         
+         -- Check for quotation marks if quote_aware_split is enabled
+         if quote_aware then
+            if ch == 34 then -- ASCII straight quote (")
+               -- print("DEBUG: Found STRAIGHT quote at position " .. i)
+               split_at = i
+               split_offset = 0
+               quote_size = 1  -- ASCII quote is 1 byte
+               break  -- Use quote immediately
+            elseif ch == 0xE2 then -- potential UTF-8 smart double quote
+               local byte2 = string.byte( text, i+1 )
+               local byte3 = string.byte( text, i+2 )
+               -- Only treat double quotes (E2 80 9C/9D) as split points.
+               -- Do NOT split on single curly quotes (E2 80 98/99) so words like
+               -- "here's" stay intact.
+               if byte2 == 0x80 and (byte3 == 0x9C or byte3 == 0x9D) then
+                  -- print(string.format("DEBUG: Found SMART double quote at position %d, bytes: 0x%02x 0x%02x 0x%02x", i, ch, byte2 or 0, byte3 or 0))
+                  split_at = i
+                  split_offset = 0
+                  quote_size = 3  -- UTF-8 smart quote is 3 bytes
+                  break  -- Use quote immediately
+               end
+            end
+         end
          
          -- We split on spaces (ascii 32) or a start of a link (inserted
          if ch == 32 or ch == 1 then -- above).
@@ -1089,17 +1170,18 @@ function Me.SplitMessage( text, chunk_size, splitmark_start, splitmark_end,
             local offset = 0                -- the next chunk.
             if ch == 32 then offset = 1 end --
             
-            -- An interesting note here is for people who like to do
-            --  certain punctuation like ". . ." where you have spaces
-            --  between your periods. It's kind of ugly to split on that
-            --  but there's a special character called "no-break space" 
-            --  that you can use instead to keep that term a whole word.
-            -- I'm considering writing an addon that automatically fixes up
-            --  your text with some preferential things like that.
-            table.insert( chunks, chunk_prefix .. text:sub( 1, i-1 ) 
-                                         .. splitmark_end .. chunk_suffix )
-            text = splitmark_start .. text:sub( i+offset )
-            break
+            if quote_aware then
+               -- Record space but continue scanning for a quote; fallback to this space later if no quote found
+               if not split_at then
+                  split_at = i
+                  split_offset = offset
+               end
+            else
+               -- Original behaviour: break on first space when quote awareness is off
+               split_at = i
+               split_offset = offset
+               break
+            end
          end
          
          -- If the scan reaches all the way to the last bits of the string,
@@ -1141,6 +1223,23 @@ function Me.SplitMessage( text, chunk_size, splitmark_start, splitmark_end,
             end                   -- No mercy.
             
             break -- Make sure that we aren't repeating the outer loop.
+         end
+      end
+      
+      -- Now perform the split if we found a split point
+      if split_at then
+         if quote_size > 0 then
+            -- Split at quote: exclude quote from first chunk, include in second chunk
+            -- This keeps opening quotes with their dialogue
+            table.insert( chunks, chunk_prefix .. text:sub( 1, split_at - 1 ) 
+                                         .. splitmark_end .. chunk_suffix )
+            -- Include the quote at the start of the second chunk
+            text = splitmark_start .. text:sub( split_at )
+         else
+            -- Split at space: discard the space as before
+            table.insert( chunks, chunk_prefix .. text:sub( 1, split_at - 1 ) 
+                                         .. splitmark_end .. chunk_suffix )
+            text = splitmark_start .. text:sub( split_at + split_offset )
          end
       end
    end
@@ -1929,7 +2028,9 @@ end
 
 if not Me.hooks.ChatFrame_OpenChat then
    Me.hooks.ChatFrame_OpenChat = true
-   hooksecurefunc( "ChatFrame_OpenChat", function( ... )
+   -- Hook ChatFrameUtil.OpenChat to intercept Enter key presses when the
+   -- continue prompt is shown. This allows pressing Enter to resume sending.
+   hooksecurefunc(ChatFrameUtil, "OpenChat", function( ... )
       Me.OnOpenChat( ... )
    end)
 end

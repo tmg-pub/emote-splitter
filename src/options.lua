@@ -42,6 +42,15 @@ local DB_DEFAULTS = {
 		-- It's called protection and not something like undo because it's
 		--  designed to protect your emotes if you disconnect.
 		emoteprotection = true;
+		
+		-- EXPERIMENTAL: Prefer splitting long messages at quotation marks
+		--  instead of whitespace. When enabled, dialogue wrapped in quotes
+		--  will stay together across chunks. Off by default.
+		quote_aware_split = false;
+		
+		-- Track if user has acknowledged the CrossRP warning
+		crossrp_warning_acknowledged = false;
+
 	};
 	-- The `char` table is unique per character, meaning that each character
 	--  the player has can store different data.
@@ -92,9 +101,22 @@ local OPTIONS_TABLE = {
 			-- `name` for description sections contains the text to fill the
 			name = L( "Version: {1}", -- widget with.
 			          C_AddOns.GetAddOnMetadata( "EmoteSplitter", "Version" ))
-			       .. "|n" .. L["by Tammya-MoonGuard"];
+			       .. "|n" .. L["Updated by Lorthendor-MoonGuard, original code by Tammya-MoonGuard"];
 			type = "description";
 		};
+		-----------------------------------------------------------------------
+		-- CrossRP compatibility warning
+		crossrp_warning = (function()
+			if C_AddOns.IsAddOnLoaded("CrossRP") then
+				return {
+					order = 15;
+					name = "|cffff0000WARNING: CrossRP Detected|r\n|cffff6600CrossRP is known to break Emote Splitter's functionality. Please disable CrossRP if you want Emote Splitter to work correctly.|r";
+					type = "description";
+					width = "full";
+				}
+			end
+			return nil
+		end)();
 		-----------------------------------------------------------------------
 		-- Each of these entries adds an element to the configuration UI, and
 		--  they each control one of the options in our database.
@@ -212,6 +234,8 @@ local OPTIONS_TABLE = {
 			set = function( info, val ) Me.db.global.showsending = val end;
 			get = function( info ) return Me.db.global.showsending end;
 		};
+
+
 		-----------------------------------------------------------------------
 		-- I was tempted to do that actually - make a nice, clean,
 		--  toggle-making function. But here we have a prime example of why
@@ -231,10 +255,20 @@ local OPTIONS_TABLE = {
 				Me.EmoteProtection.OptionsChanged()
 			end;
 			get = function( info ) return Me.db.global.emoteprotection end;
-			-- If we did have this built with a helper function, we could
-			--  always adjust what we want afterwards. Maybe that's a pro of
-			--  not setting everything up directly in the table, and assigning
-			--  it from the outside--more flexibility.
+		};
+		
+		-----------------------------------------------------------------------
+		-- EXPERIMENTAL: Quote-aware splitting option
+		quote_aware_split = {
+			name  = L["Quote-Aware Splitting (Experimental)"];
+			desc  = L["|cffff0000[EXPERIMENTAL]|r When enabled, long messages are split at quotation marks instead of whitespace. This keeps dialogue together across chunks. Disable this option to use the original splitting behavior."];
+			order = 65;
+			type  = "toggle";
+			width = "full";
+			set = function( info, val )
+				Me.db.global.quote_aware_split = val
+			end;
+			get = function( info ) return Me.db.global.quote_aware_split end;
 		};
 		
 		-----------------------------------------------------------------------
@@ -284,6 +318,7 @@ end
 function Me.Options_Apply()
 	Gopher.HideFailureMessages( Me.db.global.hidefailed )
 	Gopher.SetSplitmarks( Me.db.global.premark, Me.db.global.postmark, true )
+
 end
 
 -------------------------------------------------------------------------------
