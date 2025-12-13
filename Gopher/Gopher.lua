@@ -976,7 +976,12 @@ Me.chat_replacement_patterns = {
    -- Who knows how the chat function works in WoW, but it has vigorous checks
    --  (apparently) to allow any valid link, along with the exact color code
    --  for them.
-   "(|cff[0-9a-f]+|H[^|]+|h(.-)|h|r)"; -- RegEx's are pretty cool,
+   -- Updated for WoW 11.2.0: Added support for |cn (named colors) and |cnIQ (item quality colors)
+   -- Pattern now matches:
+   --   |cff[hex] - Traditional hex colors (e.g., |cffff0000)
+   --   |cn[name] - Named colors (e.g., |cnGREEN_FONT_COLOR) - added in 10.0.0
+   --   |cnIQ[#]  - Item quality colors (e.g., |cnIQ2 for Uncommon) - added in 11.1.5
+   "(|c[fn][^|]*|H[^|]+|h(.-)|h|r)"; -- RegEx's are pretty cool,
                                         --  aren't they?
    -- I had an idea to also keep addon links intact, but there haven't really
    --  been any complaints, and this could potentially result in some breakage
@@ -1019,7 +1024,16 @@ function Me.SplitMessage( text, chunk_size, splitmark_start, splitmark_end,
    splitmark_end   = splitmark_end or Me.splitmark_end_temp
                                                      or Me.splitmark_end or ""
    local pad_len   = chunk_prefix:len() + chunk_suffix:len()
-   
+
+   -- Debug logging for incoming text
+   if Me.debug_mode then
+      Me.DebugLog( "SplitMessage called: text_len=" .. text:len() .. " chunk_size=" .. chunk_size )
+      if text:find("|H") then
+         Me.DebugLog( "Text contains item link!" )
+         Me.DebugLog( "Raw text: " .. text:gsub("|", "||") )
+      end
+   end
+
    -- For short messages we can not waste any time and return immediately
    --                 if they can fit within a chunk already. A nice shortcut.
    -- I acknowledge that this shortcut will not detect messages with long link metadata
@@ -1027,7 +1041,7 @@ function Me.SplitMessage( text, chunk_size, splitmark_start, splitmark_end,
    --if text:len() + pad_len <= chunk_size then
   --    return { chunk_prefix .. text .. chunk_suffix }
    --end
-   
+
    -- Otherwise, we gotta get our hands dirty. We want to preserve links (or
    --  other defined things in the future) from being split apart by the
    --  cutting code below. We do that by turning them to solid strings that
@@ -1052,9 +1066,16 @@ function Me.SplitMessage( text, chunk_size, splitmark_start, splitmark_end,
          -- length of the message when enforcing limits.
          -- We're reducing the text size here, then splitting happens, then we expand it
          -- back to the original size.
+
+         -- Debug logging for link matching
+         if Me.debug_mode then
+            Me.DebugLog( "Link matched: len=" .. link:len() .. " textpart_len=" .. textpart:len() )
+            Me.DebugLog( "Link: " .. link:gsub("|", "||") )
+         end
+
          replaced_links[index] = replaced_links[index] or {} -- to.
          table.insert( replaced_links[index], link )
-         return "\001\002" .. index 
+         return "\001\002" .. index
                 .. ("\002"):rep( textpart:len() - 4 ) .. "\003"
       end)
    end
@@ -2020,7 +2041,7 @@ end
 -------------------------------------------------------------------------------
 function Me.DebugLog( ... )
    if not Me.debug_mode then return end
-   
+
    print( "[Gopher-Debug]", ... )
 end
 
