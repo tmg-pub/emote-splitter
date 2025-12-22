@@ -1,5 +1,5 @@
 #------------------------------------------------------------------------------
-## Interface: 110200
+## Interface: 110207
 ## Title: Emote Splitter
 ## Version: @@addon_version@@
 ## Notes: Unlocks chatbox and splits long emotes.
