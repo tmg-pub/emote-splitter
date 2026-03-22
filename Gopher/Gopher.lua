@@ -1923,8 +1923,56 @@ function Me.PromptForContinue()
 end
 
 -------------------------------------------------------------------------------
+function Me.OnEditBoxPreSendText( ... )
+   local _, edit_box = ...
+   local text = edit_box:GetText()
+   local type = edit_box:GetChatType()
+   if #text > 255 then
+
+      --
+      -- Clear the edit box text so that the edit box does not attempt to send
+      -- the message directly.
+      --
+      edit_box:SetText("")
+      if C_ChatInfo.InChatMessagingLockdown() then
+         DEFAULT_CHAT_FRAME:AddMessage("EmoteSplitter: Messages longer than 255 characters can't be sent while instanced content chat AddOn restrictions are active, due to Blizzard AddOn restrictions.  Shorten the message, and try again.", 1, 0, 0)
+         return
+      end
+
+      --
+      -- Handle the message as ChatFrameEditBoxBaseMixin:SendText() would,
+      -- except sending the message through Gopher's splitter routines.
+      --
+
+      if type == "WHISPER" then
+         local target = edit_box:GetTellTarget()
+         ChatFrameUtil.SetLastToldTarget( target, type )
+         Me.SendChatMessageHook( text, type, edit_box.languageID, target )
+      elseif type == "BN_WHISPER" then
+         local target = edit_box:GetTellTarget()
+         local bnetIDAccount = BNet_GetBNetIDAccount( target )
+         if bnetIDAccount then
+            ChatFrameUtil.SetLastToldTarget( target, type )
+            Me.BNSendWhisperHook( bnetIDAccount, text )
+         else
+            ChatFrameUtil.DisplaySystemMessageInPrimary( format( BN_UNABLE_TO_RESOLVE_NAME,
+                                                                 target ))
+         end
+      elseif type == "CHANNEL" then
+         Me.SendChatMessageHook( text, type, edit_box.languageID, edit_box:GetChannelTarget() )
+      else
+         Me.SendChatMessageHook( text, type, edit_box.languageID )
+      end
+   end
+end
+
+-------------------------------------------------------------------------------
 -- Hooks
 -------------------------------------------------------------------------------
+-- WoW 12.0:  It's no longer possible to hook send chat APIs without breaking
+--  chat in instances.  Instead, ChatFrame.OnEditBoxPreSendText is used to
+--  split chat messages when addon chat restrictions are not in force.
+--
 -- VERSION 7: We hook the chat functions as soon as possible. This is riskier
 --  for future compatibility and may introduce some quirks, but this allows us
 --  finer control over the chat system, and better compatibility with other
@@ -1940,16 +1988,16 @@ if not Me.hooks.SendChatMessage then
    --  later. In other words we don't want a static reference to
    --  SendChatMessageHook, because that function might change when we 
    --  load a newer version.
-   function C_ChatInfo.SendChatMessage( ... )
-      return Me.SendChatMessageHook( ... )
-   end
+--   function C_ChatInfo.SendChatMessage( ... )
+--      return Me.SendChatMessageHook( ... )
+--   end
 end
 
 if not Me.hooks.BNSendWhisper then
-   Me.hooks.BNSendWhisper = BNSendWhisper
-   function BNSendWhisper( ... )
-      return Me.BNSendWhisperHook( ... )
-   end
+--   Me.hooks.BNSendWhisper = BNSendWhisper
+--   function BNSendWhisper( ... )
+--      return Me.BNSendWhisperHook( ... )
+--   end
 end
 
 if not Me.hooks.ChatFrame_OpenChat then
@@ -1962,11 +2010,19 @@ end
 if C_Club then -- [7.x compat]
    if not Me.hooks.ClubSendMessage then
       Me.hooks.ClubSendMessage = C_Club.SendMessage
-      C_Club.SendMessage = function( ... )
-         return Me.ClubSendMessageHook( ... )
-      end
+--      C_Club.SendMessage = function( ... )
+--         return Me.ClubSendMessageHook( ... )
+--      end
    end
 end
+
+--
+-- Register for chat pre-send events to engage emote splitting if possible.
+--
+
+EventRegistry:RegisterCallback("ChatFrame.OnEditBoxPreSendText", function( ... )
+   Me.OnEditBoxPreSendText( ... )
+   end)
 
 -------------------------------------------------------------------------------
 -- Timer API

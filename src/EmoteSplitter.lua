@@ -177,7 +177,10 @@ function Me:OnEnable()
 	end
 	
 	-- Our community chat hack entry.
-	Me.UnlockCommunitiesChat()
+	-- Disabled for 12.0 as there's no pre-send event that the game developers
+	-- have provided for the communities chat frame, to avoid taint propagation
+	-- breaking instance chat.
+	-- Me.UnlockCommunitiesChat()
 	
 	-- A nice little sending indicator that appears at the bottom left corner.
 	--  This indicator shows when the system is busy sending, or waiting a bit
